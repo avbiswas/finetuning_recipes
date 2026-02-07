@@ -6,11 +6,10 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "datasets>=4.3.0",
-    "flash-attn",
     "peft>=0.18.1",
     "rich>=14.3.2",
     "rouge-score>=0.1.2",
-    "torch>=2.10.0",
+    "torch>=2.7",
     "torchvision>=0.25.0",
     "transformers>=4.57.6",
     "trl>=0.24.0",

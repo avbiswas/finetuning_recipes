@@ -2018,7 +2018,7 @@ requires-dist = [
     { name = "peft", specifier = ">=0.18.1" },
     { name = "rich", specifier = ">=14.3.2" },
     { name = "rouge-score", specifier = ">=0.1.2" },
-    { name = "torch", specifier = ">=2.10.0" },
+    { name = "torch", specifier = ">=2.7" },
     { name = "torchvision", specifier = ">=0.25.0" },
     { name = "transformers", specifier = ">=4.57.6" },
     { name = "trl", specifier = ">=0.24.0" },
