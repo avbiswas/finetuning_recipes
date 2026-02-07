@@ -21,10 +21,36 @@ def main():
     parser.add_argument("--max_seq_length", type=int, default=1024, help="Maximum sequence length.")
     parser.add_argument("--load_in_4bit", action="store_true", default=True, help="Load model in 4-bit precision (CUDA only).")
     parser.add_argument("--full_training", "-ft", action="store_true", help="Enable full training mode (no LoRA/PEFT).")
+    parser.add_argument("--split_by_words", type=float, default=0.5, help="Word level split ratio of max_seq_length. Default 0.5.")
     args = parser.parse_args()
 
     # Load the dataset
     dataset = load_dataset("json", data_files=args.dataset_path, split="train")
+
+    # Word-level chunking
+    if args.split_by_words > 0:
+        chunk_size = int(args.max_seq_length * args.split_by_words)
+        overlap_ratio = 0.2
+        step_size = int(chunk_size * (1 - overlap_ratio))
+        print(f"🔪 Chunking dataset by words with size {chunk_size} and overlap {int(overlap_ratio*100)}% (step {step_size})...")
+
+        def chunk_text(examples):
+            all_chunks = []
+            for text in examples["text"]:
+                words = text.split()
+                # Overlapping chunks
+                for i in range(0, len(words), step_size):
+                    chunk = words[i : i + chunk_size]
+                    if len(chunk) > 10: # Filter tiny chunks
+                        all_chunks.append(" ".join(chunk))
+            return {"text": all_chunks}
+
+        dataset = dataset.map(
+            chunk_text,
+            batched=True,
+            remove_columns=dataset.column_names
+        )
+        print(f"✅ Dataset chunked. New size: {len(dataset)} rows.")
 
     # Common LoRA Config
     base_lora_config = dict(
