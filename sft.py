@@ -1,3 +1,7 @@
+try:
+    from unsloth import FastLanguageModel
+except:
+    print("cant import unsloth")
 import argparse
 import torch
 from datasets import load_dataset
@@ -36,7 +40,7 @@ def main():
     if args.full_training:
         learning_rate = 1e-6
         max_grad_norm = 0.3
-        neftune_noise_alpha = 5
+        neftune_noise_alpha = None
     else:
         learning_rate = 2e-4
         max_grad_norm = 1.0
@@ -66,14 +70,13 @@ def main():
 
     if torch.cuda.is_available():
         print("🚀 CUDA detected. Using Unsloth for training.")
-        from unsloth import FastLanguageModel
 
         # Load the Model and Tokenizer with Unsloth
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name = args.base_model_id,
             max_seq_length = args.max_seq_length,
-            dtype = None, # None for auto detection
-            load_in_4bit = args.load_in_4bit,
+            load_in_4bit = not args.full_training,
+            full_finetuning=args.full_training
         )
 
         if not args.full_training:
@@ -84,8 +87,6 @@ def main():
                 **base_lora_config,
                 use_gradient_checkpointing = "unsloth", 
                 random_state = SEED,
-                use_rslora = False,
-                loftq_config = None,
             )
         else:
             print("🔥 Full training mode enabled. Skipping LoRA configuration.")
@@ -94,9 +95,6 @@ def main():
 
         training_args = SFTConfig(
             **common_training_args,
-            fp16 = not torch.cuda.is_bf16_supported(),
-            bf16 = torch.cuda.is_bf16_supported(),
-            optim = "adamw_8bit",
             weight_decay = 0.01,
             lr_scheduler_type = "linear",
         )
@@ -130,12 +128,12 @@ def main():
             **common_training_args,
             eos_token=tokenizer.eos_token,
             pad_token=tokenizer.pad_token,
-            use_cpu = not torch.cuda.is_available() and not torch.backends.mps.is_available(),
         )
 
     # Start the training process
     trainer = SFTTrainer(
         model = model,
+        tokenizer=tokenizer,
         train_dataset = dataset,
         peft_config=peft_config,
         args = training_args,

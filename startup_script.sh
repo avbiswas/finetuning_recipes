@@ -22,5 +22,14 @@ else
     echo "✅ uv is already installed."
 fi
 
+# 3. Fix "missing or unsuitable terminal: xterm-ghostty"
+# This happens when connecting from Ghostty terminal to a server without its terminfo.
+if [[ "$TERM" == "xterm-ghostty" ]]; then
+    echo "👻 Ghostty terminal detected. Applying compatibility fix..."
+    echo "export TERM=xterm-256color" >> ~/.bashrc
+    export TERM=xterm-256color
+    echo "✅ Added 'export TERM=xterm-256color' to ~/.bashrc"
+fi
+
 echo "🎉 Setup complete!"
 echo "Run 'source \$HOME/.cargo/env' to activate uv in this shell."
