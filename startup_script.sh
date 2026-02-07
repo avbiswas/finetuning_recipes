@@ -5,10 +5,18 @@ set -e
 
 echo "🚀 Starting setup script for Ubuntu..."
 
+# Determine if sudo is needed/available
+if [ "$(id -u)" -eq 0 ]; then
+    echo "Running as root, skipping sudo..."
+    SUDO=""
+else
+    SUDO="sudo"
+fi
+
 # 1. Install System Packages (tmux, vim, git, curl)
 echo "📦 Installing system packages..."
-sudo apt-get update -y
-sudo apt-get install -y tmux vim curl git
+$SUDO apt-get update -y
+$SUDO apt-get install -y tmux vim curl git
 
 # 2. Install uv
 if ! command -v uv &> /dev/null; then
