@@ -57,11 +57,9 @@ def main():
         print(f"Date-filtered query returned only {len(papers)} results — broadening search...\n")
         papers = query_arxiv(query="transformer large language model", max_results=50)
     
-    selected = papers[:10]
+    selected = papers[:25]
     print(f"Downloading {len(selected)} papers\n")
     print(selected)
-    exit()
-
     for i, paper in enumerate(selected, 1):
         arxiv_id = paper["arxiv_id"]
         filepath = output_dir / f"{arxiv_id}.txt"
