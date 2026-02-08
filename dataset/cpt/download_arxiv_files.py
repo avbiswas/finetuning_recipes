@@ -18,8 +18,8 @@ def query_arxiv(query: str = "transformer large language model", max_results: in
 
     papers = []
     for result in search.results():
-        if result.published.year < 2025:
-            continue
+        # if result.published.year < 2025:
+        #     continue
         # strip version suffix (e.g. 2501.12345v2 -> 2501.12345)
         # result.entry_id is the full URL, e.g. http://arxiv.org/abs/2101.12345v1
         arxiv_id = re.sub(r"v\d+$", "", result.entry_id.split("/")[-1])
@@ -48,23 +48,23 @@ def main():
 
     # date-scoped query for 2025 transformer / LLM papers
     # Fix: Use explicit date range instead of wildcard '*' which causes 500 errors
-    query = '(transformer OR LLM OR "large language model") AND submittedDate:[20250101 TO 20260101]'
+    query = '(transformer OR LLM OR "large language model" OR "attention" OR "mixture of experts") AND submittedDate:[20250101 TO 20260101]'
     print(f"Querying arxiv with: {query}\n")
     papers = query_arxiv(query=query, max_results=50)
 
     # fallback to a broader query if the date filter is too restrictive
     if len(papers) < 10:
         print(f"Date-filtered query returned only {len(papers)} results — broadening search...\n")
-        papers = query_arxiv(query="transformer large language model", max_results=50)
+        papers = query_arxiv(query="transformer large language model", max_results=200)
     
-    selected = papers[:25]
+    selected = papers
     print(f"Downloading {len(selected)} papers\n")
     print(selected)
     for i, paper in enumerate(selected, 1):
         arxiv_id = paper["arxiv_id"]
         filepath = output_dir / f"{arxiv_id}.txt"
 
-        print(f"[{i}/10] {arxiv_id}  {paper['title'][:72]}")
+        print(f"[{i}/{len(selected)}] {arxiv_id}  {paper['title'][:72]}")
 
         if filepath.exists():
             print(f"         -> exists, skipping\n")

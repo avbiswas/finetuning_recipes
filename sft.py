@@ -1,5 +1,6 @@
 try:
     from unsloth import FastLanguageModel
+    from unsloth.trainer import UnslothTrainer, UnslothTrainingArguments
 except:
     print("cant import unsloth")
 import argparse
@@ -8,6 +9,7 @@ from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import LoraConfig
+from transformers import TrainingArguments
 
 SEED = 3407
 
@@ -18,10 +20,12 @@ def main():
                         default="cpt_arxiv", 
                         help="ID for the new fine-tuned model.")
     parser.add_argument("--dataset_path", "-d", type=str, required=True, help="Path to the dataset in JSONL format.")
-    parser.add_argument("--max_seq_length", type=int, default=1024, help="Maximum sequence length.")
+    parser.add_argument("--max_seq_length", type=int, default=512, help="Maximum sequence length.")
     parser.add_argument("--load_in_4bit", action="store_true", default=True, help="Load model in 4-bit precision (CUDA only).")
     parser.add_argument("--full_training", "-ft", action="store_true", help="Enable full training mode (no LoRA/PEFT).")
     parser.add_argument("--split_by_words", type=float, default=0.5, help="Word level split ratio of max_seq_length. Default 0.5.")
+    parser.add_argument("--batch_size", "-bs", type=int, default=32)
+    parser.add_argument("--epochs", "-e", type=int, default=10)
     args = parser.parse_args()
 
     # Load the dataset
@@ -54,19 +58,19 @@ def main():
 
     # Common LoRA Config
     base_lora_config = dict(
-        r = 16,
+        r = 32,
         target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
                           "gate_proj", "up_proj", "down_proj"],
-        lora_alpha = 16,
+        lora_alpha = 32,
         lora_dropout = 0,
         bias = "none"
     )
 
     # Set hyperparameters based on training mode
     if args.full_training:
-        learning_rate = 1e-6
-        max_grad_norm = 0.3
-        neftune_noise_alpha = None
+        learning_rate = 1e-5
+        max_grad_norm = 0.7
+        neftune_noise_alpha = 5
     else:
         learning_rate = 2e-4
         max_grad_norm = 1.0
@@ -77,12 +81,12 @@ def main():
     # Common Training Config
     common_training_args = dict(
         output_dir=f"models/{args.output_model_id}",
-        save_total_limit=3,
-        per_device_train_batch_size=16,
-        num_train_epochs=100,
-        save_steps=10,
-        gradient_accumulation_steps = 4,
-        warmup_steps = 10,
+        save_total_limit=10,
+        per_device_train_batch_size=args.batch_size,
+        num_train_epochs=args.epochs,
+        save_steps=20,
+        gradient_accumulation_steps = 2,
+        warmup_steps = 100,
         max_length=args.max_seq_length,
         learning_rate = learning_rate,
         packing = True,
@@ -101,7 +105,7 @@ def main():
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name = args.base_model_id,
             max_seq_length = args.max_seq_length,
-            load_in_4bit = not args.full_training,
+            load_in_4bit = True,
             full_finetuning=args.full_training
         )
 
@@ -113,18 +117,29 @@ def main():
                 **base_lora_config,
                 use_gradient_checkpointing = "unsloth", 
                 random_state = SEED,
+                use_rslora = False,  # We support rank stabilized LoRA
+                loftq_config = None, # And LoftQ
+
             )
         else:
             print("🔥 Full training mode enabled. Skipping LoRA configuration.")
         
         peft_config = None 
 
-        training_args = SFTConfig(
+        training_args = UnslothTrainingArguments(
             **common_training_args,
+            embedding_learning_rate = learning_rate*0.1,
+            optim = "adamw_8bit",
             weight_decay = 0.01,
             lr_scheduler_type = "linear",
         )
-
+        trainer = UnslothTrainer(
+            model = model,
+            tokenizer=tokenizer,
+            train_dataset = dataset,
+            peft_config=peft_config,
+            args = training_args,
+        )
     else:
         print("🐢 CUDA not detected. Using standard Hugging Face Transformers.")
         
@@ -156,14 +171,14 @@ def main():
             pad_token=tokenizer.pad_token,
         )
 
-    # Start the training process
-    trainer = SFTTrainer(
-        model = model,
-        tokenizer=tokenizer,
-        train_dataset = dataset,
-        peft_config=peft_config,
-        args = training_args,
-    )
+        # Start the training process
+        trainer = SFTTrainer(
+            model = model,
+            tokenizer=tokenizer,
+            train_dataset = dataset,
+            peft_config=peft_config,
+            args = training_args,
+        )
 
     # Train
     trainer.train()

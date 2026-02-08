@@ -11,3 +11,6 @@ wheels/
 models/*
 *txt
 *jsonl
+*json
+*csv
+evals/*
