@@ -50,12 +50,8 @@ def main():
     # Fix: Use explicit date range instead of wildcard '*' which causes 500 errors
     query = '(transformer OR LLM OR "large language model" OR "attention" OR "mixture of experts") AND submittedDate:[20250101 TO 20260101]'
     print(f"Querying arxiv with: {query}\n")
-    papers = query_arxiv(query=query, max_results=50)
+    papers = query_arxiv(query=query, max_results=200)
 
-    # fallback to a broader query if the date filter is too restrictive
-    if len(papers) < 10:
-        print(f"Date-filtered query returned only {len(papers)} results — broadening search...\n")
-        papers = query_arxiv(query="transformer large language model", max_results=200)
     
     selected = papers
     print(f"Downloading {len(selected)} papers\n")

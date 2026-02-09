@@ -3,26 +3,16 @@ import json
 import torch
 import random
 import os
-import csv
 import glob
 from rich.console import Console
-from rich.table import Table
-from rich import box
+from rich.progress import track
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
 
-from rouge_score import rouge_scorer
-
-def calculate_rouge_l(output, reference):
-    """Calculates ROUGE-L F1 score."""
-    scorer = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
-    scores = scorer.score(reference, output)
-    return scores['rougeL'].fmeasure
-
-def load_model(model_path, base_model_id="HuggingFaceTB/SmolLM-135M", max_seq_length=1024, load_in_4bit=True):
+def load_model(model_path, base_model_id="HuggingFaceTB/SmolLM-135M", load_in_4bit=True):
     """
     Loads a model using Unsloth (if CUDA) or Standard HF (if not).
-    Handles Adapter logic for HF.
+    Ensures tokenizer is configured for left-padding (critical for batch generation).
     """
     print(f"Loading model from: {model_path}...")
     
@@ -33,30 +23,26 @@ def load_model(model_path, base_model_id="HuggingFaceTB/SmolLM-135M", max_seq_le
         # Unsloth handles adapters automatically if model_path points to one
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name = model_path,
-            max_seq_length = max_seq_length,
+            max_seq_length = 2048,
             dtype = None,
             load_in_4bit = load_in_4bit,
         )
         FastLanguageModel.for_inference(model)
-        return model, tokenizer
     else:
         print("🐢 CUDA not detected. Using standard Hugging Face.")
         
-        # 1. Load Tokenizer (usually from base or adapter)
+        device = "mps" if torch.backends.mps.is_available() else "cpu"
+        print(f"Using device: {device}")
+
+        # 1. Load Tokenizer
         try:
             tokenizer = AutoTokenizer.from_pretrained(model_path)
         except:
             tokenizer = AutoTokenizer.from_pretrained(base_model_id)
             
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-
-        # 2. Check if model_path is likely an adapter (contains adapter_config.json)
+        # 2. Check if model_path is likely an adapter
         is_adapter = os.path.exists(os.path.join(model_path, "adapter_config.json"))
         
-        device = "mps" if torch.backends.mps.is_available() else "cpu"
-        print(f"Using device: {device}")
-
         if is_adapter:
             print(f"Found adapter at {model_path}. Loading base model {base_model_id} first...")
             model = AutoModelForCausalLM.from_pretrained(
@@ -73,144 +59,92 @@ def load_model(model_path, base_model_id="HuggingFaceTB/SmolLM-135M", max_seq_le
                 torch_dtype=torch.float16 if device == "mps" else torch.float32
             )
             
-        return model, tokenizer
+    # CRITICAL: Set padding side to left for decoder-only batch generation
+    tokenizer.padding_side = "left"
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        
+    return model, tokenizer
 
-def generate_text(model, tokenizer, prompt, max_new_tokens=50):
-    """Generates text based on the prompt."""
+def generate_batch(model, tokenizer, prompts, max_new_tokens=64, batch_size=4, repetition_penalty=1.2):
+    """
+    Generates text for a list of prompts using batch processing.
+    """
+    all_outputs = []
     
-    # Check if Unsloth or HF
-    is_unsloth = hasattr(model, "fast_language_model") # Unsloth models often have this or we just use standard generate
-    
-    inputs = tokenizer([prompt], return_tensors="pt").to(model.device)
-    
-    # Generate
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs, 
-            max_new_tokens=max_new_tokens, 
-            use_cache=True,
-            pad_token_id=tokenizer.pad_token_id
-        )
-   
-    # Decode
-    # We only want the *newly generated* text, so we slice the tokens
-    input_length = inputs.input_ids.shape[1]
-    generated_tokens = outputs[0][input_length:]
-    decoded_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
-    
-    return decoded_text.strip()
+    # Process in chunks of batch_size
+    for i in range(0, len(prompts), batch_size):
+        batch_prompts = prompts[i : i + batch_size]
+        
+        # Tokenize
+        inputs = tokenizer(
+            batch_prompts, 
+            return_tensors="pt", 
+            padding=True, 
+            truncation=True,
+            max_length=2048
+        ).to(model.device)
+        
+        input_length = inputs.input_ids.shape[1]
+        
+        # Generate
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs, 
+                max_new_tokens=max_new_tokens, 
+                use_cache=True,
+                pad_token_id=tokenizer.pad_token_id,
+                repetition_penalty=repetition_penalty
+            )
+        
+        # Decode
+        # Slice to get only new tokens
+        generated_tokens = outputs[:, input_length:]
+        decoded_batch = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+        
+        all_outputs.extend([text.strip() for text in decoded_batch])
+        
+    return all_outputs
 
 def main():
-    parser = argparse.ArgumentParser(description="Run inference comparison between multiple models.")
-    # Allow multiple models
-    parser.add_argument("--models", nargs='+', required=True, help="List of model paths or IDs to compare (e.g. --models model1 model2 model3)")
+    parser = argparse.ArgumentParser(description="Run batch inference for multiple models.")
+    parser.add_argument("--models", nargs='+', required=True, help="List of model paths or IDs")
     parser.add_argument("--base_model", type=str, default="HuggingFaceTB/SmolLM-135M", help="Base model ID (needed for HF adapters)")
     parser.add_argument("--dataset", type=str, required=True, help="Path to JSONL dataset")
-    parser.add_argument("--num_samples", type=int, default=5, help="Number of samples to run")
+    parser.add_argument("--num_samples", type=int, default=10, help="Number of samples to run")
+    parser.add_argument("--batch_size", type=int, default=4, help="Batch size for inference")
     parser.add_argument("--prefix_len", type=int, default=20, help="Number of words for input prefix")
     parser.add_argument("--predict_len", type=int, default=50, help="Number of words to predict")
-    parser.add_argument("--output_json", type=str, default="inference_results.json", help="Path to save results as JSON")
-    parser.add_argument("--output_csv", type=str, default="inference_results.csv", help="Path to save results as CSV")
+    parser.add_argument("--output_json", type=str, default="inference_generations.json", help="Path to save generations")
     
     args = parser.parse_args()
-    
     console = Console()
     
-    # Load Models
-    console.rule("[bold blue]Loading Models")
-    loaded_models = []
-    
-    # Expand wildcards
-    expanded_model_paths = []
-    for pattern in args.models:
-        matches = glob.glob(pattern, recursive=True)
-        if matches:
-            expanded_model_paths.extend(matches)
-        else:
-            # If no glob match (or not a pattern), assume it's a direct ID/path
-            expanded_model_paths.append(pattern)
-            
-    # Remove duplicates while preserving order
-    unique_paths = list(dict.fromkeys(expanded_model_paths))
-
-    if not unique_paths:
-        console.print("[bold red]No models found![/bold red]")
-        return
-
-    for model_path in unique_paths:
-        console.print(f"Loading {model_path}...")
-        try:
-            model, tokenizer = load_model(model_path, args.base_model)
-            
-            # Determine display name
-            if os.path.exists(model_path):
-                # It's a file path
-                # If it ends in 'final' or 'checkpoint-X', include the parent folder for clarity
-                # e.g. 'models/my_run/final' -> 'my_run/final'
-                name = model_path.rstrip(os.sep)
-                parts = name.split(os.sep)
-                if len(parts) >= 2:
-                    # Use last two parts for uniqueness (e.g., 'cpt_arxiv_ft/checkpoint-90')
-                    display_name = f"{parts[-2]}/{parts[-1]}"
-                else:
-                    display_name = parts[-1]
-            else:
-                # It's a HF ID
-                display_name = model_path
-
-            loaded_models.append({
-                "name": display_name,
-                "path": model_path,
-                "model": model,
-                "tokenizer": tokenizer,
-                "scores": [] 
-            })
-        except Exception as e:
-            console.print(f"[bold red]Failed to load {model_path}: {e}[/bold red]")
-
-    if not loaded_models:
-        console.print("[bold red]No models successfully loaded. Exiting.[/bold red]")
-        return
-
-    # Load Dataset
-    console.rule("[bold blue]Loading Dataset")
+    # 1. Prepare Dataset
+    console.rule("[bold blue]Preparing Dataset")
     with open(args.dataset, 'r') as f:
         lines = f.readlines()
     
     # Shuffle and select samples
+    random.seed(42) # Fixed seed for reproducibility across runs if needed
     random.shuffle(lines)
-    samples = lines[:args.num_samples]
+    selected_lines = lines[:args.num_samples]
     
-    console.print(f"Loaded {len(lines)} rows. Running inference on {args.num_samples} random samples.\n")
+    samples = []
+    prompts = []
+    ground_truths = []
     
-    # Create Table
-    table = Table(title="Inference Comparison (ROUGE-L Score)", box=box.ROUNDED, show_lines=True)
-    table.add_column("Input Prefix", style="dim", width=30)
-    
-    # Add column for each model
-    for m in loaded_models:
-        table.add_column(f"{m['name']}", style="cyan")
-        
-    table.add_column("Ground Truth (GT)", style="green")
-    
-    results_list = []
-    csv_rows = []
-
-    for i, line in enumerate(samples):
+    for i, line in enumerate(selected_lines):
         data = json.loads(line)
         full_text = data.get('text', '')
         
-        # Split text
         words = full_text.split()
         if len(words) < args.prefix_len + args.predict_len:
-            continue # Skip if too short
+            continue
             
         # Create random start point
         max_start = len(words) - (args.prefix_len + args.predict_len)
-        if max_start <= 0:
-            start_idx = 0
-        else:
-            start_idx = random.randint(0, max_start)
+        start_idx = 0 if max_start <= 0 else random.randint(0, max_start)
             
         prefix_words = words[start_idx : start_idx + args.prefix_len]
         gt_words = words[start_idx + args.prefix_len : start_idx + args.prefix_len + args.predict_len]
@@ -218,81 +152,83 @@ def main():
         prefix_text = " ".join(prefix_words)
         gt_text = " ".join(gt_words)
         
-        row_cells = [prefix_text + "..."]
-        json_entry = {
+        samples.append({
+            "id": i,
             "prefix": prefix_text,
             "ground_truth": gt_text,
             "predictions": {}
-        }
-        
-        csv_row = {
-            "prefix": prefix_text,
-            "ground_truth": gt_text
-        }
-        
-        with console.status(f"[bold yellow]Processing sample {i+1}/{args.num_samples}..."):
-            for m in loaded_models:
-                pred = generate_text(m["model"], m["tokenizer"], prefix_text, max_new_tokens=len(gt_words)*2)
-                score = calculate_rouge_l(pred, gt_text)
-                
-                # Store score
-                m["scores"].append(score)
-                
-                # Add to table cell
-                row_cells.append(f"[bold]{score:.4f}[/bold]\n{pred}")
-                
-                # Add to JSON/CSV data
-                json_entry["predictions"][m["name"]] = {
-                    "text": pred,
-                    "rouge_l": score
-                }
-                csv_row[f"{m['name']}_pred"] = pred
-                csv_row[f"{m['name']}_score"] = score
+        })
+        prompts.append(prefix_text)
+        ground_truths.append(gt_text)
 
-        # Add GT
-        row_cells.append(gt_text)
-        table.add_row(*row_cells)
-        
-        results_list.append(json_entry)
-        csv_rows.append(csv_row)
+    console.print(f"Prepared {len(samples)} samples.")
 
-    console.print(table)
-    
-    # Calculate Average Scores
-    console.rule("[bold blue]Final Average Scores")
-    avg_table = Table(box=box.SIMPLE)
-    avg_table.add_column("Model", style="cyan")
-    avg_table.add_column("Avg ROUGE-L", style="bold green")
-    
-    final_scores = {}
-    for m in loaded_models:
-        if m["scores"]:
-            avg_score = sum(m["scores"]) / len(m["scores"])
+    # 2. Resolve Model Paths
+    expanded_model_paths = []
+    for pattern in args.models:
+        matches = glob.glob(pattern, recursive=True)
+        if matches:
+            expanded_model_paths.extend(matches)
         else:
-            avg_score = 0.0
-        final_scores[m["name"]] = avg_score
-        avg_table.add_row(m["name"], f"{avg_score:.4f}")
-        
-    console.print(avg_table)
+            expanded_model_paths.append(pattern)
+    unique_paths = list(dict.fromkeys(expanded_model_paths))
+    
+    if not unique_paths:
+        console.print("[bold red]No models found![/bold red]")
+        return
 
-    # Save Results
-    if args.output_json:
-        # Add summary to JSON
-        output_data = {
-            "summary": final_scores,
-            "samples": results_list
-        }
-        with open(args.output_json, 'w') as f:
-            json.dump(output_data, f, indent=4)
-        console.print(f"\n[bold green]JSON results saved to {args.output_json}[/bold green]")
+    # 3. Inference Loop
+    for model_path in unique_paths:
+        console.rule(f"[bold blue]Processing {model_path}")
         
-    if args.output_csv and csv_rows:
-        keys = csv_rows[0].keys()
-        with open(args.output_csv, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=keys)
-            writer.writeheader()
-            writer.writerows(csv_rows)
-        console.print(f"[bold green]CSV results saved to {args.output_csv}[/bold green]")
+        # Determine display name
+        if os.path.exists(model_path):
+            name = model_path.rstrip(os.sep)
+            parts = name.split(os.sep)
+            display_name = f"{parts[-2]}/{parts[-1]}" if len(parts) >= 2 else parts[-1]
+        else:
+            display_name = model_path
+            
+        try:
+            # Load
+            model, tokenizer = load_model(model_path, args.base_model)
+            
+            # Generate
+            console.print(f"Generating for {len(prompts)} prompts (Batch Size: {args.batch_size})...")
+            
+            # Estimate max_new_tokens from predict_len words (approx 1.3 tokens per word)
+            max_tokens = int(args.predict_len * 1.5)
+            
+            predictions = generate_batch(
+                model, 
+                tokenizer, 
+                prompts, 
+                max_new_tokens=max_tokens, 
+                batch_size=args.batch_size,
+                repetition_penalty=1.2
+            )
+            
+            # Store results
+            for sample, pred in zip(samples, predictions):
+                sample["predictions"][display_name] = pred
+                
+            # Cleanup
+            del model
+            del tokenizer
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+        except Exception as e:
+            console.print(f"[bold red]Error processing {model_path}: {e}[/bold red]")
+            import traceback
+            traceback.print_exc()
+
+    # 4. Save Outputs
+    console.rule("[bold blue]Saving Results")
+    with open(args.output_json, 'w') as f:
+        json.dump(samples, f, indent=4)
+        
+    console.print(f"[bold green]Generations saved to {args.output_json}[/bold green]")
 
 if __name__ == "__main__":
     main()

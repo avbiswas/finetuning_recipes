@@ -20,6 +20,7 @@ def main():
                         default="cpt_arxiv", 
                         help="ID for the new fine-tuned model.")
     parser.add_argument("--dataset_path", "-d", type=str, required=True, help="Path to the dataset in JSONL format.")
+    parser.add_argument("--test_dataset_path", "-td", type=str, required=True, help="Path to the test dataset in JSONL format for evaluation.")
     parser.add_argument("--max_seq_length", type=int, default=512, help="Maximum sequence length.")
     parser.add_argument("--load_in_4bit", action="store_true", default=True, help="Load model in 4-bit precision (CUDA only).")
     parser.add_argument("--full_training", "-ft", action="store_true", help="Enable full training mode (no LoRA/PEFT).")
@@ -29,7 +30,8 @@ def main():
     args = parser.parse_args()
 
     # Load the dataset
-    dataset = load_dataset("json", data_files=args.dataset_path, split="train")
+    train_dataset = load_dataset("json", data_files=args.dataset_path, split="train")
+    eval_dataset = load_dataset("json", data_files=args.test_dataset_path, split="train")
 
     # Word-level chunking
     if args.split_by_words > 0:
@@ -49,12 +51,19 @@ def main():
                         all_chunks.append(" ".join(chunk))
             return {"text": all_chunks}
 
-        dataset = dataset.map(
+        train_dataset = train_dataset.map(
             chunk_text,
             batched=True,
-            remove_columns=dataset.column_names
+            remove_columns=train_dataset.column_names
         )
-        print(f"✅ Dataset chunked. New size: {len(dataset)} rows.")
+        
+        eval_dataset = eval_dataset.map(
+            chunk_text,
+            batched=True,
+            remove_columns=eval_dataset.column_names
+        )
+            
+        print(f"✅ Datasets chunked. Train size: {len(train_dataset)} rows. Eval size: {len(eval_dataset)} rows.")
 
     # Common LoRA Config
     base_lora_config = dict(
@@ -98,6 +107,14 @@ def main():
         neftune_noise_alpha = neftune_noise_alpha,
     )
 
+    common_training_args.update(dict(
+        evaluation_strategy = "steps",
+        eval_steps = 20,
+        load_best_model_at_end = True,
+        metric_for_best_model = "loss",
+        per_device_eval_batch_size = args.batch_size,
+    ))
+
     if torch.cuda.is_available():
         print("🚀 CUDA detected. Using Unsloth for training.")
 
@@ -136,7 +153,8 @@ def main():
         trainer = UnslothTrainer(
             model = model,
             tokenizer=tokenizer,
-            train_dataset = dataset,
+            train_dataset = train_dataset,
+            eval_dataset = eval_dataset,
             peft_config=peft_config,
             args = training_args,
         )
@@ -175,7 +193,8 @@ def main():
         trainer = SFTTrainer(
             model = model,
             tokenizer=tokenizer,
-            train_dataset = dataset,
+            train_dataset = train_dataset,
+            eval_dataset = eval_dataset,
             peft_config=peft_config,
             args = training_args,
         )
