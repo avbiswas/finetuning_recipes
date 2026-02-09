@@ -116,6 +116,7 @@ def main():
     parser.add_argument("--prefix_len", type=int, default=20, help="Number of words for input prefix")
     parser.add_argument("--predict_len", type=int, default=50, help="Number of words to predict")
     parser.add_argument("--output_json", type=str, default="inference_generations.json", help="Path to save generations")
+    parser.add_argument("--output_results", type=str, default=None, help="If set, run evals and save results to this path")
     
     args = parser.parse_args()
     console = Console()
@@ -125,43 +126,48 @@ def main():
     with open(args.dataset, 'r') as f:
         lines = f.readlines()
     
-    # Shuffle and select samples
-    random.seed(42) # Fixed seed for reproducibility across runs if needed
+    random.seed(42)
     random.shuffle(lines)
-    selected_lines = lines[:args.num_samples]
-    
+
+    # Parse all valid texts (use first 70% of words to avoid reference sections)
+    all_texts = []
+    for line in lines:
+        data = json.loads(line)
+        full_text = data.get('text', '')
+        words = full_text.split()
+        # Only keep first 90% of each text to skip references
+        words = words[:int(len(words) * 0.9)]
+        if len(words) >= args.prefix_len + args.predict_len:
+            all_texts.append(words)
+
+    # Sample num_samples windows across all texts
     samples = []
     prompts = []
     ground_truths = []
-    
-    for i, line in enumerate(selected_lines):
-        data = json.loads(line)
-        full_text = data.get('text', '')
-        
-        words = full_text.split()
-        if len(words) < args.prefix_len + args.predict_len:
-            continue
-            
-        # Create random start point
-        max_start = len(words) - (args.prefix_len + args.predict_len)
-        start_idx = 0 if max_start <= 0 else random.randint(0, max_start)
-            
-        prefix_words = words[start_idx : start_idx + args.prefix_len]
-        gt_words = words[start_idx + args.prefix_len : start_idx + args.prefix_len + args.predict_len]
-        
+    sample_id = 0
+
+    while len(samples) < args.num_samples and all_texts:
+        text_words = random.choice(all_texts)
+        max_start = len(text_words) - (args.prefix_len + args.predict_len)
+        start_idx = random.randint(0, max_start)
+
+        prefix_words = text_words[start_idx : start_idx + args.prefix_len]
+        gt_words = text_words[start_idx + args.prefix_len : start_idx + args.prefix_len + args.predict_len]
+
         prefix_text = " ".join(prefix_words)
         gt_text = " ".join(gt_words)
-        
+
         samples.append({
-            "id": i,
+            "id": sample_id,
             "prefix": prefix_text,
             "ground_truth": gt_text,
             "predictions": {}
         })
         prompts.append(prefix_text)
         ground_truths.append(gt_text)
+        sample_id += 1
 
-    console.print(f"Prepared {len(samples)} samples.")
+    console.print(f"Prepared {len(samples)} samples from {len(all_texts)} texts.")
 
     # 2. Resolve Model Paths
     expanded_model_paths = []
@@ -229,6 +235,43 @@ def main():
         json.dump(samples, f, indent=4)
         
     console.print(f"[bold green]Generations saved to {args.output_json}[/bold green]")
+
+    # 5. Optionally run evals
+    if args.output_results:
+        from evals import calculate_metrics
+        console.rule("[bold blue]Running Evaluations")
+
+        model_names = list(samples[0]["predictions"].keys())
+        from rich.table import Table
+        from rich import box
+
+        table = Table(title="Evaluation Results", box=box.ROUNDED)
+        table.add_column("Model", style="cyan")
+        table.add_column("ROUGE-1", style="green")
+        table.add_column("ROUGE-L", style="green")
+        table.add_column("DistilBERT F1", style="magenta")
+
+        final_scores = {}
+        for model_name in model_names:
+            preds = [s["predictions"][model_name] for s in samples if model_name in s["predictions"]]
+            refs = [s["ground_truth"] for s in samples if model_name in s["predictions"]]
+
+            console.print(f"Evaluating {model_name}...")
+            scores = calculate_metrics(preds, refs)
+            final_scores[model_name] = scores
+
+            table.add_row(
+                model_name,
+                f"{scores['rouge1']:.4f}",
+                f"{scores['rougeL']:.4f}",
+                f"{scores.get('bertscore_f1', 0):.4f}",
+            )
+
+        console.print(table)
+
+        with open(args.output_results, 'w') as f:
+            json.dump(final_scores, f, indent=4)
+        console.print(f"[bold green]Evaluation results saved to {args.output_results}[/bold green]")
 
 if __name__ == "__main__":
     main()

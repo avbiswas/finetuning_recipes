@@ -52,6 +52,8 @@ def main():
             all_chunks = []
             for text in examples["text"]:
                 words = text.split()
+                # Use first 90% of words to skip reference sections
+                words = words[:int(len(words) * 0.9)]
                 # Overlapping chunks
                 for i in range(0, len(words), step_size):
                     chunk = words[i : i + chunk_size]
@@ -210,7 +212,7 @@ def main():
 
     trainer.add_callback(early_stopping_callback)
     # Train
-    trainer.train(resume_from_checkpoint = True)
+    trainer.train()
 
     # Save the model
     if torch.cuda.is_available():
