@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import torch
 import random
 import os
@@ -106,6 +107,32 @@ def generate_batch(model, tokenizer, prompts, max_new_tokens=64, batch_size=4, r
         
     return all_outputs
 
+def compute_perplexity(model, tokenizer, prefixes, ground_truths):
+    """Compute perplexity on ground truth continuations given prefixes."""
+    total_loss = 0
+    total_tokens = 0
+
+    for prefix, gt in zip(prefixes, ground_truths):
+        full_text = prefix + " " + gt
+
+        prefix_ids = tokenizer(prefix, return_tensors="pt").input_ids
+        full_ids = tokenizer(full_text, return_tensors="pt", truncation=True, max_length=2048).input_ids.to(model.device)
+
+        prefix_len = prefix_ids.shape[1]
+
+        labels = full_ids.clone()
+        labels[0, :prefix_len] = -100  # Only compute loss on GT portion
+
+        with torch.no_grad():
+            outputs = model(input_ids=full_ids, labels=labels)
+
+        num_gt_tokens = (labels != -100).sum().item()
+        total_loss += outputs.loss.item() * num_gt_tokens
+        total_tokens += num_gt_tokens
+
+    avg_loss = total_loss / total_tokens
+    return math.exp(avg_loss)
+
 def main():
     parser = argparse.ArgumentParser(description="Run batch inference for multiple models.")
     parser.add_argument("--models", nargs='+', required=True, help="List of model paths or IDs")
@@ -184,6 +211,7 @@ def main():
         return
 
     # 3. Inference Loop
+    perplexities = {}
     for model_path in unique_paths:
         console.rule(f"[bold blue]Processing {model_path}")
         
@@ -217,7 +245,13 @@ def main():
             # Store results
             for sample, pred in zip(samples, predictions):
                 sample["predictions"][display_name] = pred
-                
+
+            # Compute perplexity while model is loaded
+            console.print(f"Computing perplexity...")
+            ppl = compute_perplexity(model, tokenizer, prompts, ground_truths)
+            perplexities[display_name] = ppl
+            console.print(f"Perplexity: {ppl:.2f}")
+
             # Cleanup
             del model
             del tokenizer
@@ -247,6 +281,7 @@ def main():
 
         table = Table(title="Evaluation Results", box=box.ROUNDED)
         table.add_column("Model", style="cyan")
+        table.add_column("Perplexity", style="blue")
         table.add_column("ROUGE-1", style="green")
         table.add_column("ROUGE-L", style="green")
         table.add_column("DistilBERT F1", style="magenta")
@@ -258,10 +293,12 @@ def main():
 
             console.print(f"Evaluating {model_name}...")
             scores = calculate_metrics(preds, refs)
+            scores['perplexity'] = perplexities.get(model_name, None)
             final_scores[model_name] = scores
 
             table.add_row(
                 model_name,
+                f"{scores['perplexity']:.2f}" if scores['perplexity'] else "N/A",
                 f"{scores['rouge1']:.4f}",
                 f"{scores['rougeL']:.4f}",
                 f"{scores.get('bertscore_f1', 0):.4f}",

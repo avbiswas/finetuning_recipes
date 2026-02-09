@@ -5,7 +5,7 @@ except:
     print("cant import unsloth")
 import argparse
 import torch
-from datasets import load_dataset
+from datasets import load_dataset, interleave_datasets
 from trl import SFTTrainer, SFTConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import LoraConfig
@@ -35,11 +35,23 @@ def main():
     parser.add_argument("--split_by_words", type=float, default=0.5, help="Word level split ratio of max_seq_length. Default 0.5.")
     parser.add_argument("--batch_size", "-bs", type=int, default=32)
     parser.add_argument("--epochs", "-e", type=int, default=10)
+    parser.add_argument("--mix", action="store_true", help="Mix in 20%% scientific_papers arxiv data to prevent forgetting")
     args = parser.parse_args()
 
     # Load the dataset
     train_dataset = load_dataset("json", data_files=args.dataset_path, split="train")
     eval_dataset = load_dataset("json", data_files=args.test_dataset_path, split="train")
+
+    # Optional: Mix in general scientific papers data
+    if args.mix:
+        print("🔀 Mixing in 20% scientific_papers arxiv data...")
+        general_data = load_dataset("scientific_papers", "arxiv", split="train")
+        train_dataset = interleave_datasets(
+            [train_dataset, general_data],
+            probabilities=[0.8, 0.2],
+            seed=SEED
+        )
+        print(f"✅ Mixed dataset created. Your data: 80%, General arxiv: 20%")
 
     # Word-level chunking
     if args.split_by_words > 0:
