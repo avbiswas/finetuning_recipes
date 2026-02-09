@@ -46,6 +46,13 @@ def main():
     if args.mix:
         print("🔀 Mixing in 20% scientific_papers arxiv data...")
         general_data = load_dataset("scientific_papers", "arxiv", split="train")
+
+        # Normalize schema: scientific_papers has 'article' field, we need 'text'
+        def normalize_schema(example):
+            return {"text": example.get("article", "") or example.get("text", "")}
+
+        general_data = general_data.map(normalize_schema, remove_columns=general_data.column_names)
+
         train_dataset = interleave_datasets(
             [train_dataset, general_data],
             probabilities=[0.8, 0.2],

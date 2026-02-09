@@ -8,7 +8,7 @@ dependencies = [
     "absl-py>=2.4.0",
     "arxiv>=2.4.0",
     "bert-score>=0.3.13",
-    "datasets>=4.3.0",
+    "datasets==3.6",
     "evaluate>=0.4.6",
     "peft>=0.18.1",
     "pypdf>=6.6.2",
