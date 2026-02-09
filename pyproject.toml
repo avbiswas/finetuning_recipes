@@ -10,6 +10,7 @@ dependencies = [
     "bert-score>=0.3.13",
     "datasets==3.6",
     "evaluate>=0.4.6",
+    "instructor>=1.14.5",
     "peft>=0.18.1",
     "pypdf>=6.6.2",
     "rich>=14.3.2",

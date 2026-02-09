@@ -1,18 +1,30 @@
-
-
 # Finetuning Tutorial
 
+## Video 1
 - [x] Custom Dataset generation (Arxiv)
-- [x] Continued Pretraining
+- [x] Continued Pretraining (Theory)
 - [x] Expt with chunking and packing
 - [x] ROGUE score setup
 - [x] CPT with LORA
-- [ ] Midtraining theory
-- [ ] Instruction tuning synthetic data gen (dspy?)
-- [ ] Instruction tuning SFT
-- [ ] Function calling data gen
-- [ ] More SFT for function calling train
-- [ ] Preference dataset generation with LLM Judges
+
+## Video 2
+- [ ] Instruction tuning synthetic data gen (dspy/instructor?)
+- [ ] Midtraining
+- [ ] Instruction tuning using SFT
+- [ ] Notes on distillation
+
+## Video 3
+- [ ] RLHF/RLAIF
 - [ ] DPO
-- [ ] Out of scope: RL and Reasoning
+- [ ] Preference dataset gen using LLM judges
+- [ ] Notes about active learning and data annotation
+
+## Video 4
+- [ ] RLVR, GRPO with Prime Labs
+- [ ] Creating verifiable environments
+- [ ] More SFT for function calling train
+
+
+
+
 
