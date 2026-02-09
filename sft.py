@@ -11,6 +11,14 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import LoraConfig
 from transformers import TrainingArguments
 
+from transformers import EarlyStoppingCallback
+early_stopping_callback = EarlyStoppingCallback(
+    early_stopping_patience = 3,     # How many steps we will wait if the eval loss doesn't decrease
+                                     # For example the loss might increase, but decrease after 3 steps
+    early_stopping_threshold = 0.0,  # Can set higher - sets how much loss should decrease by until
+                                     # we consider early stopping. For eg 0.01 means if loss was
+                                     # 0.02 then 0.01, we consider to early stop the run.
+)
 SEED = 3407
 
 def main():
@@ -108,10 +116,11 @@ def main():
     )
 
     common_training_args.update(dict(
-        evaluation_strategy = "steps",
+        eval_strategy = "steps",
         eval_steps = 20,
+        save_strategy = "steps",
         load_best_model_at_end = True,
-        metric_for_best_model = "loss",
+        metric_for_best_model = "eval_loss",
         per_device_eval_batch_size = args.batch_size,
     ))
 
@@ -199,8 +208,9 @@ def main():
             args = training_args,
         )
 
+    trainer.add_callback(early_stopping_callback)
     # Train
-    trainer.train()
+    trainer.train(resume_from_checkpoint = True)
 
     # Save the model
     if torch.cuda.is_available():
