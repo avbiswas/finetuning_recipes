@@ -11,6 +11,9 @@ dependencies = [
     "datasets==3.6",
     "evaluate>=0.4.6",
     "instructor>=1.14.5",
+    "mlx",
+    "mlx-lm>=0.31.1",
+    "outlines>=1.2.12",
     "peft>=0.18.1",
     "pypdf>=6.6.2",
     "rich>=14.3.2",
@@ -22,3 +25,4 @@ dependencies = [
     "trl>=0.24.0",
     "unsloth>=2026.1.4",
 ]
+

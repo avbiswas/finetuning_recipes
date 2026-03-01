@@ -73,15 +73,18 @@ def main():
     # Run Evaluations
     console.rule("[bold blue]Running Evaluations")
     
-    final_scores = {}
+    final_results = {
+        "aggregate": {},
+        "instances": []
+    }
     
     table = Table(title="Evaluation Results", box=box.ROUNDED)
     table.add_column("Model", style="cyan")
     table.add_column("ROUGE-1", style="green")
     table.add_column("ROUGE-L", style="green")
-    # table.add_column("BLEU", style="yellow")
     table.add_column("DistilBERT F1", style="magenta")
     
+    # Calculate aggregate scores
     for model_name in model_names:
         preds = model_data[model_name]["preds"]
         refs = model_data[model_name]["refs"]
@@ -91,21 +94,46 @@ def main():
             
         console.print(f"Evaluating {model_name}...")
         scores = calculate_metrics(preds, refs)
-        final_scores[model_name] = scores
+        final_results["aggregate"][model_name] = scores
         
         table.add_row(
             model_name,
             f"{scores['rouge1']:.4f}",
             f"{scores['rougeL']:.4f}",
-            # f"{scores['bleu']:.4f}",
             f"{scores.get('bertscore_f1', 0):.4f}"
         )
         
     console.print(table)
     
+    # Calculate per-instance scores for detailed viewing
+    console.print("\n[yellow]Calculating per-instance metrics...[/yellow]")
+    for item in data:
+        instance_entry = {
+            "id": item.get("id"),
+            "prefix": item["prefix"],
+            "ground_truth": item["ground_truth"],
+            "predictions": item["predictions"],
+            "metrics": {}
+        }
+        
+        ref = item["ground_truth"]
+        for model_name, pred in item["predictions"].items():
+            # Instance metrics (ROUGE/BLEU only for speed)
+            inst_scores = {}
+            r_res = rouge.compute(predictions=[pred], references=[ref])
+            inst_scores['rouge1'] = r_res['rouge1']
+            inst_scores['rougeL'] = r_res['rougeL']
+            
+            b_res = bleu.compute(predictions=[pred], references=[ref])
+            inst_scores['bleu'] = b_res['bleu']
+            
+            instance_entry["metrics"][model_name] = inst_scores
+            
+        final_results["instances"].append(instance_entry)
+
     # Save results
     with open(args.output_results, 'w') as f:
-        json.dump(final_scores, f, indent=4)
+        json.dump(final_results, f, indent=4)
         
     console.print(f"\n[bold green]Evaluation results saved to {args.output_results}[/bold green]")
 

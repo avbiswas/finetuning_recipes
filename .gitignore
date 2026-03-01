@@ -17,3 +17,4 @@ evals/*
 
 .envrc
 .env
+data/
