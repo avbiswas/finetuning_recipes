@@ -43,12 +43,12 @@ tokenizer = get_chat_template(tokenizer, chat_template="chatml")
 dataset = load_dataset("paperbd/paper_instructions_300K-v1", split="train")
 dataset_variations = []
 
-for i in range(args.variation):
+for i in range(args.variations):
   dataset_variations.append(to_sharegpt(
         dataset,
         merged_prompt="{instruction}\n\n{input}",
         output_column_name="output",
-        conversation_extension=2,
+        conversation_extension=args.conversation_extension,
         random_state = SEED + i
   ))
 dataset = concatenate_datasets(dataset_variations)
@@ -109,6 +109,7 @@ trainer = SFTTrainer(
     train_dataset = train_dataset,
     eval_dataset = val_dataset,
     args = SFTConfig(
+        output_dir = f"models/{args.output_model_id}",
         dataset_text_field = "text",
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
@@ -117,7 +118,8 @@ trainer = SFTTrainer(
         warmup_steps = 5,
         num_train_epochs=args.epochs,
         learning_rate = args.learning_rate,
-        logging_steps = 1,
+        logging_steps = 10,
+        dataloader_num_workers=8,
         optim = "adamw_8bit",
         weight_decay = 0.001,
         lr_scheduler_type = "linear",
@@ -126,7 +128,7 @@ trainer = SFTTrainer(
         seed=SEED,
         max_length=args.max_seq_length,
         packing=True,
-        dataset_num_proc=4,
+        dataset_num_proc=8,
         save_strategy="steps",
         save_steps=50,
         save_total_limit=3,
