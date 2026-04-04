@@ -18,10 +18,10 @@ parser.add_argument("--output_model_id", "-o", type=str, default="instruction_tu
 parser.add_argument("--dataset", "-d", type=str, default="paperbd/paper_instructions_300K-v1",
                     help="HF dataset to train on (alpaca format: instruction, input, output).")
 parser.add_argument("--max_seq_length", type=int, default=2048)
-parser.add_argument("--batch_size", "-bs", type=int, default=8)
-parser.add_argument("--grad_accum", type=int, default=8)
+parser.add_argument("--batch_size", "-bs", type=int, default=32)
+parser.add_argument("--grad_accum", type=int, default=4)
 parser.add_argument("--epochs", "-e", type=int, default=3)
-parser.add_argument("--lora_r", type=int, default=16)
+parser.add_argument("--lora_r", type=int, default=32)
 parser.add_argument("--load_in_4bit", action="store_true", default=True)
 parser.add_argument("--conversation_extension", type=int, default=2)
 parser.add_argument("--variations", type=int, default=2) 
@@ -92,7 +92,7 @@ model = FastLanguageModel.get_peft_model(
     bias="none",
     use_gradient_checkpointing="unsloth",
     random_state=SEED,
-    use_rslora=False,
+    use_rslora=args.lora_r >= 64,
     loftq_config=None,
 )
 
