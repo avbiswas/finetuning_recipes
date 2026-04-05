@@ -39,7 +39,8 @@ subprocess.run(
     [sys.executable, "-m", "mlx_lm", "convert",
      "--hf-path", merged_path,
      "--mlx-path", mlx_path,
-     "--quantize", "--q-bits", str(args.q_bits)],
+    # "--quantize", "--q-bits", str(args.q_bits)
+     ],
     check=True,
 )
 

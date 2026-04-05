@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
 import outlines
 
-JUDGE_MODEL = "google/gemini-2.5-flash"
+JUDGE_MODEL = "openai/gpt-5.4-mini"
 SEMAPHORE = 50
 
 JUDGE_PROMPT = """\
@@ -73,7 +73,7 @@ async def judge_one(sem: asyncio.Semaphore, idx: int, total: int, record: dict) 
         ground_truth=record["ground_truth"],
     )
     async with sem:
-        raw = await model(prompt, JudgeScore, max_tokens=2000)
+        raw = await model(prompt, JudgeScore, max_tokens=4000)
         score = JudgeScore.model_validate_json(raw) if isinstance(raw, str) else raw
 
     result = {

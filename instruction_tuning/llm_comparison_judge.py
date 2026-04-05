@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, create_model
 from openai import AsyncOpenAI
 import outlines
 
-JUDGE_MODEL = "google/gemini-3.1-flash-lite-preview"
+JUDGE_MODEL = "openai/gpt-5.4-mini"
 SEMAPHORE = 50
 
 JUDGE_PROMPT = """\
