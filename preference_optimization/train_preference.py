@@ -16,6 +16,11 @@ from __future__ import annotations
 
 import argparse
 
+try:
+    from preference_optimization.trl_compat import patch_trl_optional_dependency_checks
+except ModuleNotFoundError:
+    from trl_compat import patch_trl_optional_dependency_checks
+
 from datasets import load_dataset
 from transformers import EarlyStoppingCallback
 from unsloth import FastLanguageModel, PatchDPOTrainer, is_bfloat16_supported
@@ -90,6 +95,7 @@ def main() -> None:
 
     if args.method == "dpo":
         PatchDPOTrainer()
+        patch_trl_optional_dependency_checks()
         from trl import DPOTrainer, DPOConfig
 
         trainer = DPOTrainer(
@@ -130,6 +136,7 @@ def main() -> None:
         )
     else:
         # ORPO
+        patch_trl_optional_dependency_checks()
         from trl import ORPOTrainer, ORPOConfig
 
         trainer = ORPOTrainer(
