@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
 import outlines
 
-JUDGE_MODEL = "openai/gpt-5.4-mini"
+JUDGE_MODEL = "deepseek/deepseek-v4-flash"
 SEMAPHORE = 50
 
 JUDGE_PROMPT = """\
