@@ -11,7 +11,7 @@ End-to-end post-training recipes for small language models — from continued pr
 | **DPO** (Direct Preference Optimization) | Align the SFT model using pairwise human/AI preferences |
 | **RLVR** | Coming next — reinforcement learning with verifiable rewards |
 
-Videos for [CPT](https://www.youtube.com/@avb_fj) and [SFT](https://www.youtube.com/@avb_fj) are already on the channel. DPO and RLVR videos are in the works.
+Videos for [CPT](https://youtu.be/B8Ur62D3J3U) and [SFT](https://youtu.be/gvZIUEL6Ruc?si=da47dP3Fad-ggAhH) are already on the channel. DPO and RLVR videos are in the works.
 
 ## Related Repos
 
