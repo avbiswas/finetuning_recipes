@@ -9,7 +9,7 @@ from sklearn.metrics import roc_auc_score
 sys.path.insert(0, "reasoning_train")
 from reward_model import load_reward_model
 
-MODEL_DIR = "models/reward_model_final/reward_model_finetuned_v2"
+MODEL_DIR = "models/reward_model_final/reward_model_finetuned_v5"
 MAX_LEN = 512
 
 
@@ -62,7 +62,7 @@ print(f"\n{'='*60}")
 print("2. VALIDATION CONFOUNDS")
 print("-" * 60)
 
-val = load_dataset("paperbd/papers_answer_equivalance", split="test")
+val = load_dataset("paperbd/paper_answers_reward", split="test")
 confounds = [r for r in val if r["orig_score"] == 3.0]
 refs_c = [r["orig_reference_answer"] for r in confounds]
 bads_c = [r["orig_response"] for r in confounds]

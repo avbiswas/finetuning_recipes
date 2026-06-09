@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import random
 import torch
 import torch.nn as nn
@@ -10,6 +11,8 @@ from datasets import load_dataset
 from tqdm import tqdm
 from scipy.stats import spearmanr
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from augment import build_augmentations
 
 import argparse
 
@@ -27,6 +30,9 @@ DROPOUT = 0.2
 EPOCHS = 50
 MAX_LEN = 512
 PATIENCE = 5
+UNFREEZE_LAYERS = 3  # last N transformer layers to unfreeze. 0 = head only, 6 = all
+POOLING = "meanmax"  # "mean" | "max" | "meanmax" — meanmax keeps mean (what MiniLM
+#                       was trained for) + max (preserves single changed-token signal)
 OUTPUT_DIR = f"models/reward_model_finetuned_{args.output}" if args.output else "models/reward_model_finetuned"
 
 
@@ -56,21 +62,30 @@ class RewardModel(nn.Module):
         self.encoder = AutoModel.from_pretrained(MODEL_ID)
         for p in self.encoder.parameters():
             p.requires_grad = False
-        for layer in get_encoder_layers(self.encoder)[-3:]:
-            for p in layer.parameters():
-                p.requires_grad = True
+        if UNFREEZE_LAYERS > 0:
+            for layer in get_encoder_layers(self.encoder)[-UNFREEZE_LAYERS:]:
+                for p in layer.parameters():
+                    p.requires_grad = True
+        pool_dim = self.encoder.config.hidden_size * (2 if POOLING == "meanmax" else 1)
         self.head = nn.Sequential(
             nn.Dropout(DROPOUT),
-            nn.Linear(self.encoder.config.hidden_size, 1),
+            nn.Linear(pool_dim, 1),
         )
 
-    def mean_pool(self, hidden, mask):
-        mask = mask.unsqueeze(-1).expand(hidden.size()).float()
-        return (hidden * mask).sum(1) / mask.sum(1).clamp(min=1e-9)
+    def pool(self, hidden, mask):
+        mask_f = mask.unsqueeze(-1).float()
+        mean = (hidden * mask_f).sum(1) / mask_f.sum(1).clamp(min=1e-9)
+        if POOLING == "mean":
+            return mean
+        # mask padded positions to -inf so they never win the max
+        mx = hidden.masked_fill(mask_f == 0, float("-inf")).max(1).values
+        if POOLING == "max":
+            return mx
+        return torch.cat([mean, mx], dim=-1)
 
     def forward(self, input_ids, attention_mask):
         out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
-        pooled = self.mean_pool(out.last_hidden_state, attention_mask)
+        pooled = self.pool(out.last_hidden_state, attention_mask)
         return self.head(pooled).squeeze(-1)
 
     def score_batch(self, references, responses):
@@ -125,30 +140,28 @@ for r in stsb:
     train_records.append({
         "orig_reference_answer": r["sentence1"],
         "orig_response": r["sentence2"],
-        "orig_score": float(r["score"]),
+        "orig_score": float(r["score"]) * 4.0 + 1.0,  # stsb score is 0-1, map to 1-5
     })
 
 rng.shuffle(train_records)
 
-# ---- Synthetic data ----
-# 1. Reference + reference = 5.0 (exact match)
-for r in train_records[:1000]:
-    ref = r["orig_reference_answer"] if isinstance(r["orig_reference_answer"], str) else json.dumps(r["orig_reference_answer"])
-    train_records.append({"orig_reference_answer": ref, "orig_response": ref, "orig_score": 5.0})
+# ---- Synthetic data (appended) ----
+# Minimal-edit contrastive pairs built on the GOLD reference text: a one-word
+# change that preserves meaning (synonym/filler) stays high (4.5), while a
+# one-word change that flips meaning (antonym/negation/number) drops to 1.5.
+# This is what teaches the model to attend to WHICH word changed instead of
+# just edit distance. Also includes exact-match (5.0) and coarse length/format
+# negatives. See augment.py for the transforms.
+ref_pool = list({
+    r["orig_reference_answer"]
+    for r in train_records
+    if isinstance(r.get("orig_reference_answer"), str) and len(r["orig_reference_answer"].split()) >= 8
+})
+rng.shuffle(ref_pool)
 
-# 2. Reference + half 5-star response = 2.0
-fivestar = [r for r in train_records if r["orig_score"] == 5.0 and len(str(r.get("orig_response", ""))) > 50]
-for r in rng.sample(fivestar, min(500, len(fivestar))):
-    resp = str(r["orig_response"])
-    half = " ".join(resp.split()[:len(resp.split()) // 2])
-    if half:
-        train_records.append({"orig_reference_answer": r["orig_reference_answer"], "orig_response": half, "orig_score": 2.0})
-
-# 3. Reference + repeated response = 2.0
-for r in rng.sample(fivestar, min(500, len(fivestar))):
-    resp = str(r["orig_response"])
-    doubled = f"{resp} {resp}"
-    train_records.append({"orig_reference_answer": r["orig_reference_answer"], "orig_response": doubled, "orig_score": 2.0})
+aug_records, aug_counts = build_augmentations(ref_pool, rng, cap_per_type=1500)
+train_records.extend(aug_records)
+print(f"Appended {len(aug_records)} augmented records: {aug_counts}")
 
 rng.shuffle(train_records)
 print(f"Train: {len(train_records)}, Val: {len(val_records)}")
@@ -196,6 +209,9 @@ for epoch in range(EPOCHS):
     model.train()
     train_loss = 0
     for batch_idx, (texts, labels) in enumerate(train_loader):
+        texts = list(texts)
+        # Augmentation (exact-match + minimal-edit contrastive pairs) is now
+        # appended to the dataset offline; see build_augmentations above.
         enc = tokenizer(texts, padding=True, truncation=True, max_length=MAX_LEN, return_tensors="pt")
         input_ids = enc["input_ids"].to(DEVICE)
         mask = enc["attention_mask"].to(DEVICE)

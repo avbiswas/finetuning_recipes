@@ -4,9 +4,9 @@ from transformers import AutoTokenizer, AutoModel
 from pathlib import Path
 
 BASE_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-EMBED_DIM = 384
 # BASE_MODEL = "distilbert/distilbert-base-cased"
-# EMBED_DIM = 768
+
+EMBED_DIM = None  # auto-detected from config if None
 
 
 def mean_pool(hidden, attention_mask):
@@ -37,7 +37,9 @@ def load_reward_model(path):
         encoder = AutoModel.from_pretrained(BASE_MODEL)
 
     # Head (~3KB)
-    head = nn.Sequential(nn.Dropout(0.1), nn.Linear(EMBED_DIM, 1))
+    # Auto-detect embedding dim
+    dim = EMBED_DIM or encoder.config.hidden_size
+    head = nn.Sequential(nn.Dropout(0.1), nn.Linear(dim, 1))
     for fname in ["head_weights.pt", "head_weights.bin"]:
         hp = path / fname
         if hp.exists():
