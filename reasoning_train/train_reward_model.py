@@ -18,9 +18,7 @@ parser.add_argument("--output", "-o", type=str, default=None, help="Output model
 args = parser.parse_args()
 
 MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
-EMBED_DIM = 384
 # MODEL_ID = "distilbert/distilbert-base-cased"
-# EMBED_DIM = 768
 DEVICE = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
 BATCH_SIZE = 64
 LR_HEAD = 5e-4
@@ -30,6 +28,14 @@ EPOCHS = 50
 MAX_LEN = 512
 PATIENCE = 5
 OUTPUT_DIR = f"models/reward_model_finetuned_{args.output}" if args.output else "models/reward_model_finetuned"
+
+
+def get_encoder_layers(encoder):
+    if hasattr(encoder, "encoder") and hasattr(encoder.encoder, "layer"):
+        return encoder.encoder.layer
+    if hasattr(encoder, "transformer") and hasattr(encoder.transformer, "layer"):
+        return encoder.transformer.layer
+    raise AttributeError(f"Unsupported encoder layout for {encoder.__class__.__name__}")
 
 
 class RewardDataset(Dataset):
@@ -50,12 +56,12 @@ class RewardModel(nn.Module):
         self.encoder = AutoModel.from_pretrained(MODEL_ID)
         for p in self.encoder.parameters():
             p.requires_grad = False
-        for layer in self.encoder.encoder.layer[-3:]:
+        for layer in get_encoder_layers(self.encoder)[-3:]:
             for p in layer.parameters():
                 p.requires_grad = True
         self.head = nn.Sequential(
             nn.Dropout(DROPOUT),
-            nn.Linear(EMBED_DIM, 1),
+            nn.Linear(self.encoder.config.hidden_size, 1),
         )
 
     def mean_pool(self, hidden, mask):
