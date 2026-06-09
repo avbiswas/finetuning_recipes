@@ -18,6 +18,9 @@ parser.add_argument("--output", "-o", type=str, default=None, help="Output model
 args = parser.parse_args()
 
 MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
+EMBED_DIM = 384
+# MODEL_ID = "distilbert/distilbert-base-cased"
+# EMBED_DIM = 768
 DEVICE = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
 BATCH_SIZE = 64
 LR_HEAD = 5e-4
@@ -52,8 +55,7 @@ class RewardModel(nn.Module):
                 p.requires_grad = True
         self.head = nn.Sequential(
             nn.Dropout(DROPOUT),
-            nn.Linear(384, 1),
-            nn.Sigmoid(),
+            nn.Linear(EMBED_DIM, 1),
         )
 
     def mean_pool(self, hidden, mask):
@@ -109,7 +111,38 @@ for r in ae:
         "orig_reference_answer": r["reference"],
         "orig_response": r["candidate"],
         "orig_score": 4.0 if r["label"] == "equivalent" else 1.5,
+    }    )
+
+# Mix in STS-B (sentence similarity, scored 0-5)
+stsb = load_dataset("sentence-transformers/stsb", split="train")
+for r in stsb:
+    train_records.append({
+        "orig_reference_answer": r["sentence1"],
+        "orig_response": r["sentence2"],
+        "orig_score": float(r["score"]),
     })
+
+rng.shuffle(train_records)
+
+# ---- Synthetic data ----
+# 1. Reference + reference = 5.0 (exact match)
+for r in train_records[:1000]:
+    ref = r["orig_reference_answer"] if isinstance(r["orig_reference_answer"], str) else json.dumps(r["orig_reference_answer"])
+    train_records.append({"orig_reference_answer": ref, "orig_response": ref, "orig_score": 5.0})
+
+# 2. Reference + half 5-star response = 2.0
+fivestar = [r for r in train_records if r["orig_score"] == 5.0 and len(str(r.get("orig_response", ""))) > 50]
+for r in rng.sample(fivestar, min(500, len(fivestar))):
+    resp = str(r["orig_response"])
+    half = " ".join(resp.split()[:len(resp.split()) // 2])
+    if half:
+        train_records.append({"orig_reference_answer": r["orig_reference_answer"], "orig_response": half, "orig_score": 2.0})
+
+# 3. Reference + repeated response = 2.0
+for r in rng.sample(fivestar, min(500, len(fivestar))):
+    resp = str(r["orig_response"])
+    doubled = f"{resp} {resp}"
+    train_records.append({"orig_reference_answer": r["orig_reference_answer"], "orig_response": doubled, "orig_score": 2.0})
 
 rng.shuffle(train_records)
 print(f"Train: {len(train_records)}, Val: {len(val_records)}")
@@ -145,7 +178,7 @@ optimizer = torch.optim.AdamW(
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-best_spearman = -float("inf")
+best_val_mse = float("inf")
 best_state = None
 patience_counter = 0
 VAL_EVERY = 250
@@ -170,36 +203,34 @@ for epoch in range(EPOCHS):
         train_loss += loss.item()
         global_step += 1
         pbar.update(1)
-        pbar.set_postfix({"loss": f"{loss.item():.4f}", "best_sr": f"{best_spearman:.4f}"})
+        pbar.set_postfix({"loss": f"{loss.item():.4f}", "best_mse": f"{best_val_mse:.4f}"})
 
         # Validate every VAL_EVERY steps
         if global_step % VAL_EVERY == 0:
             model.eval()
-            val_loss, all_preds, all_labels = 0, [], []
+            val_loss = 0
             with torch.no_grad():
                 for v_texts, v_labels in val_loader:
                     enc_v = tokenizer(v_texts, padding=True, truncation=True, max_length=MAX_LEN, return_tensors="pt")
                     v_preds = model(enc_v["input_ids"].to(DEVICE), enc_v["attention_mask"].to(DEVICE))
                     v_loss = F.mse_loss(v_preds, v_labels.float().to(DEVICE))
                     val_loss += v_loss.item()
-                    all_preds.extend(v_preds.tolist())
-                    all_labels.extend(v_labels.tolist())
 
-            sr, _ = spearmanr(all_labels, all_preds)
+            val_mse = val_loss / len(val_loader)
 
-            improved = sr > best_spearman
+            improved = val_mse < best_val_mse
             if improved:
-                best_spearman = sr
+                best_val_mse = val_mse
                 best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                 model.encoder.save_pretrained(OUTPUT_DIR)
                 tokenizer.save_pretrained(OUTPUT_DIR)
                 head_state = {k.replace("head.", ""): v for k, v in best_state.items() if k.startswith("head.")}
                 torch.save(head_state, f"{OUTPUT_DIR}/head_weights.pt")
                 patience_counter = 0
-                tqdm.write(f"Step {global_step}: val_loss={val_loss/len(val_loader):.4f} val_spearman={sr:.4f} ✓ saved")
+                tqdm.write(f"Step {global_step}: val_mse={val_mse:.4f} ✓ saved")
             else:
                 patience_counter += 1
-                tqdm.write(f"Step {global_step}: val_loss={val_loss/len(val_loader):.4f} val_spearman={sr:.4f} (no improvement {patience_counter}/{PATIENCE})")
+                tqdm.write(f"Step {global_step}: val_mse={val_mse:.4f} (no improvement {patience_counter}/{PATIENCE})")
 
             if patience_counter >= PATIENCE:
                 tqdm.write(f"Early stopping at step {global_step}")
@@ -212,7 +243,7 @@ for epoch in range(EPOCHS):
 pbar.close()
 
 # ---- Restore best weights ----
-print(f"Restoring best model (val_spearman={best_spearman:.4f})...")
+print(f"Restoring best model (val_mse={best_val_mse:.4f})...")
 model.load_state_dict(best_state)
 
 # ---- Quick test ----
