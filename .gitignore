@@ -8,7 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
-uv.lock
 models/*
 *txt
 *jsonl

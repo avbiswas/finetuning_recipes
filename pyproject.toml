@@ -27,10 +27,12 @@ dependencies = [
     "torchvision==0.25.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchvision>=0.25.0; sys_platform != 'linux' or platform_machine != 'x86_64'",
     "sentence-transformers>=3.0.0",
-    "transformers>=4.57.6",
+    "transformers>=4.57.6,<5",
     "trl>=0.24.0",
     "unsloth>=2026.1.4",
     "xformers==0.0.35; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "verifiers>=0.1.14",
+    "neural-txt[hf]>=0.1.6",
 ]
 
 [tool.uv.sources]

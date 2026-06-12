@@ -368,4 +368,135 @@ Dir: `reward_model_finetuned_v7-1`.
 4. Dogfeed "wrong number" single case (0.50) misleads — at n=150 v7-1 notices number
    swaps 79% vs v6's 47%. Trust benchmark_swap.py over single dogfeed cases.
 5. **Caution for v7 final**: v6's external metrics peaked at midpoint and declined with
-   val-MSE checkpoint selection. Keep v7-1; consider selecting by 100-pt Spearman.
+    val-MSE checkpoint selection. Keep v7-1; consider selecting by 100-pt Spearman.
+
+
+---
+
+## v7 Full Series (June 2026)
+
+### v7-2 and v7-3 — longer training, midpoint-vs-final trade-off returns
+
+The predicted v6 pattern repeated with v7: longer training with val-MSE checkpoint selection
+traded external metrics for val fit.
+
+| Metric | v7-1 (mid) | v7-2 | v7-3 (final) |
+|---|---|---|---|
+| 100-pt eval Spearman | **0.718** | 0.649 | 0.705 |
+| AE ROC-AUC | **0.942** | 0.925 | 0.932 |
+| Val split Spearman | 0.647 | 0.664 | **0.679** |
+| Val MSE | 0.0673 | 0.0716 | 0.0762 |
+| Confounds fooled | 12% | 7% | **6%** |
+| Confounds caught | **16%** | 18% | 12% |
+
+| Perturbation | v7-1 noticed | v7-2 noticed | v7-3 noticed |
+|---|---|---|---|
+| Antonym | **81%** | 68% | 81% |
+| Negation | **86%** | 77% | 85% |
+| Number | **80%** | 69% | 76% |
+| Random word | 44% | 49% | 41% |
+
+v7-3 partially recovered from the v7-2 dip but never matched v7-1's external metrics.
+v7-1 remained the best overall checkpoint.
+
+
+---
+
+## v8 Series — DistilBERT 3-layer (June 2026)
+
+### Config
+Same recipe as v6 (contrastive augmentation, meanmax pooling, STS-B fix) but on
+`distilbert/distilbert-base-cased` (66M params, 768-dim). Last 3 layers unfrozen (~17M
+trainable). Dirs: v8-1 through v8-4.
+
+### Benchmark
+
+| Metric | v8-1 | v8-2 | v8-3 | v8-4 | v7-1 (MiniLM ref) |
+|---|---|---|---|---|---|
+| 100-pt eval Spearman | **0.777** | 0.702 | 0.644 | 0.691 | 0.718 |
+| AE ROC-AUC | 0.832 | 0.840 | 0.849 | 0.832 | **0.942** |
+| Val split Spearman | 0.556 | 0.626 | 0.673 | **0.695** | 0.647 |
+| Val MSE | 0.0685 | 0.0671 | 0.0704 | 0.0708 | **0.0673** |
+| Confounds fooled | **1%** | 4% | 14% | 17% | 12% |
+| Confounds caught | 12% | **21%** | 13% | 13% | 16% |
+
+### Swap detection
+
+| Perturbation | v8-1 | v8-2 | v8-3 | v8-4 | v7-1 |
+|---|---|---|---|---|---|
+| Exact match (>0.8) | 0.62 (2%) | 0.66 (13%) | 0.75 (41%) | 0.82 (65%) | **0.85 (67%)** |
+| Antonym noticed | 9% | 40% | 53% | 63% | **81%** |
+| Negation noticed | 39% | 71% | 71% | 83% | **86%** |
+| Number noticed | 7% | 41% | 62% | 69% | **80%** |
+| Random word | 19% | 29% | 44% | 39% | 44% |
+
+### Key findings
+1. **v8-1 had a stunning 100-pt Spearman (0.777)** but near-zero swap detection (9% antonym,
+   7% number). It was essentially a ranking-only model catching semantic quality without
+   any word-level discrimination.
+2. **Training progression improved swap detection** but cost ranking: antonym went
+   9→40→53→63% while 100-pt dropped 0.777→0.691.
+3. **DistilBERT's 3-layer ceiling is ~63% antonym detection** — even after 4 iterations
+   of training, it couldn't match MiniLM v6-1's 3-layer 29%→v7-1's 5-layer 81% jump.
+4. **Dynamic range was the fundamental problem** — dogfeed revealed all DistilBERT variants
+   clustered scores in a narrow band (~0.4-0.7), unlike MiniLM's wide 0.14-0.90 spread.
+
+
+---
+
+## v9 Series — DistilBERT 5-layer (June 2026)
+
+### Config
+DistilBERT with **last 5 layers unfrozen** (~28M trainable params). All other recipe
+pieces unchanged from v6/v7 (contrastive aug, meanmax pooling, STS-B, same datasets).
+First time applying the full 5-layer treatment to the larger architecture.
+
+### Benchmark
+
+| Metric | v7-1 (MiniLM 5L) | v9-1 (mid) | v9-2 | v9-3 (final) |
+|---|---|---|---|---|
+| 100-pt eval Spearman | 0.718 | 0.728 | **0.757** | 0.705 |
+| AE ROC-AUC | **0.942** | 0.919 | 0.918 | 0.900 |
+| Val split Spearman | 0.647 | 0.670 | 0.684 | **0.697** |
+| Val MSE | 0.0673 | 0.0749 | 0.0732 | **0.0621** |
+| Confounds fooled | 12% | **9%** | **8%** | 9% |
+| Confounds caught | **16%** | 15% | **16%** | 6% |
+
+### Swap detection
+
+| Perturbation | v7-1 | v9-1 | v9-2 | v9-3 |
+|---|---|---|---|---|
+| Exact match (>0.8) | 0.85 (67%) | 0.79 (61%) | 0.83 (67%) | **0.86 (71%)** |
+| Antonym noticed | **81%** | 65% | 73% | 73% |
+| Negation noticed | 86% | 73% | 87% | **89%** |
+| Number noticed | **80%** | 73% | 73% | 75% |
+| Random word (untrained) | 44% | 56% | 43% | **61%** |
+
+### Dogfeed (dynamic range test)
+
+| Case | v7-1 | v9-1 | v9-2 | v9-3 |
+|---|---|---|---|---|
+| Exact copy | 0.90 | 0.76 | 0.62 | 0.58 |
+| 1:1 identical | 0.85 | 0.56 | 0.61 | 0.60 |
+| Completely irrelevant | 0.14 | 0.42 | 0.63 | 0.62 |
+| Correct paraphrase | 0.83 | 0.73 | 0.68 | 0.74 |
+| One-word swap | 0.40 | 0.44 | 0.34 | 0.43 |
+
+### Key findings
+1. **5-layer DistilBERT did improve over 3-layer** — v9-2 hit 0.757 100-pt Spearman
+   (new record) and v9-3 hit 89% negation + 61% untrained swap (new records).
+2. **But dynamic range never materialized.** The dogfeed reveals the core problem:
+   v9-3 gives identical text 0.60 and completely irrelevant text 0.62 — a 0.02 gap.
+   v7-1 gives identical text 0.90 and irrelevant text 0.14 — a 0.76 gap.
+3. **Root cause is architectural, not training.** DistilBERT was distilled from BERT for
+   NLU classification — its embeddings group semantically similar text together. All ML
+   research sentences live in the same neighborhood. MiniLM was pretrained as a sentence
+   embedding model with contrastive learning — its 384-dim space naturally pushes
+   dissimilar sentences apart.
+4. **The Spearman/MSE numbers on the eval set are misleading** — ranking can look good
+   even when scores are compressed into a 0.4-0.7 band. Dogfeed catches what the
+   summary statistics miss.
+5. **v7-1 (MiniLM 5L, 22M) remains the best reward model** — it's the only model that
+   simultaneously achieves high ranking correlation AND wide dynamic range on extreme
+   cases. The contrastive augmentation works because MiniLM was already pretrained to
+   represent semantic distance, not just semantic category.
