@@ -158,6 +158,51 @@ def score_neuraltxt(
     return score
 
 
+def score_neuraltxt_batch(
+    completions: list[str],
+    references: list[str],
+    reward_model: NeuralTxtReward | None = None,
+) -> list[float]:
+    """Score many completions with a single batched reward-model forward.
+
+    Equivalent to mapping score_neuraltxt over the inputs, but the reward model
+    is invoked once via batch_score instead of once per completion. Invalid /
+    empty completions short-circuit to 0.0 without hitting the model.
+    """
+    scores = [0.0] * len(completions)
+    valid_indices: list[int] = []
+    valid_responses: list[str] = []
+    valid_references: list[str] = []
+
+    for index, (completion, reference) in enumerate(zip(completions, references)):
+        if not completion or not reference or not _has_expected_format(completion):
+            continue
+        _, response, _ = _extract_think_content(completion)
+        if not response:
+            continue
+        valid_indices.append(index)
+        valid_responses.append(response)
+        valid_references.append(reference)
+
+    if not valid_responses:
+        return scores
+
+    rm = reward_model or _get_reward_model()
+    raw_scores = rm.batch_score(valid_responses, valid_references)
+
+    for index, response, reference, raw in zip(
+        valid_indices, valid_responses, valid_references, raw_scores
+    ):
+        score = float(raw)
+        max_ok = max(_word_count(reference) * 1.5, _word_count(reference) + 20)
+        response_words = _word_count(response)
+        if response_words > max_ok:
+            score *= max_ok / response_words
+        scores[index] = score
+
+    return scores
+
+
 def trl_reward_functions():
     """Return synchronous reward adapters for TRL's GRPO trainer."""
 
@@ -184,10 +229,10 @@ def trl_reward_functions():
 
     def neuraltxt_reward(prompts, completions, answer, **kwargs):
         del prompts, kwargs
-        return [
-            score_neuraltxt(completion[0]["content"], str(reference or ""))
-            for completion, reference in zip(completions, answer)
-        ]
+        return score_neuraltxt_batch(
+            [completion[0]["content"] for completion in completions],
+            [str(reference or "") for reference in answer],
+        )
 
     return [
         think_format_reward,
