@@ -1,32 +1,35 @@
-# Larger rented-GPU run. Tuned for an 80GB GPU class instance; adjust downward
-# if reward-model or generation memory is tighter than expected.
 model:
   name: "paperbd/neuraltxt-135M-reasoning-base"
   from_sft: false
-  max_new_tokens: 2048
-  soft_threshold: 256
+  max_new_tokens: 1536
+  soft_threshold: 1024
 
 training:
-  rollout_batch_size: 16
-  n_rollouts: 8
-  temperature: 0.8
-  batch_size: 64
+  rollout_batch_size: 4
+  n_rollouts: 4
+  temperature: 0.5         # training rollouts: needs variance for GRPO, but >0.5 loses format rewards
+  eval_temperature: 0.2    # eval/checkpoint-selection: low variance, not exploration
+  batch_size: 16
   gradient_accumulation_steps: 4
-  learning_rate: 0.000001
+  learning_rate: 0.000005
   num_epochs: 3
   log_every: 1
+  eval_every_train_step: 8
   top_p: 0.95
-  num_repeats: 2
-  buffer_size: 512
+  num_repeats: 3
+  buffer_size: 64
+  std_normalize_advantages: false
 
 data:
-  dataset: "data/paper_instructions_300K-v2"
+  dataset: "paperbd/paper_instructions_300K-v1"
   train_split: "train"
   test_split: "test"
   train_data_size: 50000
-  eval_data_size: 512
-  test_batch_size: 16
+  eval_data_size: 64
+  test_batch_size: 8
 
 loss:
   kld_weight: 0.02
-  entropy_weight: 0.01
+  entropy_weight: 0.0
+  loss_implementation: dr_grpo
+  max_tokens: 256  # ~mean think+answer completion length; keeps loss at per-token scale

@@ -72,11 +72,20 @@ eval_data_size = config["data"].get(
 test_batch_size = config["data"]["test_batch_size"]
 kld_weight = config["loss"]["kld_weight"]
 entropy_weight = config["loss"]["entropy_weight"]
+loss_implementation = config["loss"].get("loss_implementation", "dr_grpo")
+# dr_grpo's constant denominator; defaults to the generation length. Acts as an
+# lr reparametrization, so retune learning_rate if you change it.
+dr_grpo_max_tokens = config["loss"].get("max_tokens", max_new_tokens)
 top_p = config["training"]["top_p"]
 temperature = config["training"]["temperature"]
+# Eval generation uses a separate, lower temperature: eval is a measurement /
+# checkpoint-selection signal, so it wants low variance, not exploration.
+eval_temperature = config["training"].get("eval_temperature", 0.2)
 from_sft = config["model"].get("from_sft", False)
 buffer_size = config["training"].get("buffer_size", 500)
 num_repeats = config["training"].get("num_repeats", 5)
+eval_every_train_step = config["training"].get("eval_every_train_step", 8)
+std_normalize_advantages = config["training"].get("std_normalize_advantages", False)
 
 if n_rollouts < 2:
     raise ValueError("GRPO requires n_rollouts >= 2 so group advantages are non-zero.")
@@ -172,6 +181,7 @@ def inference(csv_suffix=""):
         test_dataloader,
         max_new_tokens=max_new_tokens,
         output_path=eval_path,
+        temperature=eval_temperature,
     )
     summary = stats_df.describe().round(6).to_dict()
     with (logs_dir / f"eval_summary_{csv_suffix}.json").open("w") as f:
@@ -280,6 +290,28 @@ class GRPO:
             )
         )
 
+    def eval_stepwise(self, step):
+        """Lightweight eval for stepwise checkpoints — no model save."""
+        if not accelerator.is_main_process:
+            return
+        eval_path = logs_dir / f"eval_generations_step_{step}.json"
+        stats_df = run_inference(
+            accelerator.unwrap_model(llm),
+            tokenizer,
+            test_dataloader,
+            max_new_tokens=max_new_tokens,
+            output_path=eval_path,
+            temperature=eval_temperature,
+        )
+        step_score_mean = stats_df["total_reward"].mean()
+        step_score_std = stats_df["total_reward"].std()
+        pprint(
+            f"[bold cyan]Step {step} eval:[/bold cyan] "
+            f"[bold]{step_score_mean:.3f} +- {step_score_std:.3f}[/bold] "
+            f"(on {len(stats_df)} examples)"
+        )
+        return step_score_mean, step_score_std
+
     def train(self):
         optimizer.zero_grad()
         i = 0
@@ -355,10 +387,16 @@ class GRPO:
         )
 
         # advantages = [num_examples, n_rollouts]
+        # Mean-center always. std-normalization is opt-in via config: when off
+        # (default), advantage magnitude tracks real reward separation instead of
+        # amplifying the residual (judge noise + length) in near-degenerate groups
+        # to unit scale. When on, this is classic GRPO normalization.
         rewards = reward_batch.total.reshape(rollouts.num_prompts, rollouts.group_size)
-        advantages = (rewards - np.mean(rewards, axis=1, keepdims=True)) / (
-            np.std(rewards, axis=1, keepdims=True) + 1e-8
-        )
+        advantages = rewards - np.mean(rewards, axis=1, keepdims=True)
+        if std_normalize_advantages:
+            advantages = advantages / (
+                np.std(rewards, axis=1, keepdims=True) + 1e-8
+            )
         advantages = advantages.reshape(-1, 1)
         advantages = torch.tensor(advantages, dtype=torch.float32)
         self.rewards.extend(rewards.flatten().tolist())
@@ -399,6 +437,10 @@ class GRPO:
                             f"loss: {np.mean(self.losses):.3f}"
                         )
                         progress_bar.update(1)
+                    if eval_every_train_step > 0 and self.num_training % eval_every_train_step == 0:
+                        llm.eval()
+                        self.eval_stepwise(self.num_training)
+                        llm.train()
         if needs_training:
             optimizer.step()
             optimizer.zero_grad()
@@ -444,7 +486,12 @@ class GRPO:
             attention_masks,
         )
         reasoning_loss = calculate_grpo_loss(
-            log_probs, old_log_probs, advantages, response_masks
+            log_probs,
+            old_log_probs,
+            advantages,
+            response_masks,
+            loss_implementation=loss_implementation,
+            max_tokens=dr_grpo_max_tokens,
         )
 
         total_loss = reasoning_loss
@@ -456,11 +503,22 @@ class GRPO:
                     input_ids,
                     attention_masks,
                 )
-            kld_loss = calculate_kld_loss(full_log_probs, ref_log_probs, response_masks)
+            kld_loss = calculate_kld_loss(
+                full_log_probs,
+                ref_log_probs,
+                response_masks,
+                loss_implementation=loss_implementation,
+                max_tokens=dr_grpo_max_tokens,
+            )
             total_loss = total_loss + kld_weight * kld_loss
 
         if entropy_weight > 0:
-            entropy = calculate_entropy(full_log_probs, response_masks)
+            entropy = calculate_entropy(
+                full_log_probs,
+                response_masks,
+                loss_implementation=loss_implementation,
+                max_tokens=dr_grpo_max_tokens,
+            )
             total_loss = total_loss - entropy_weight * entropy
 
         self.losses.append(total_loss.item())

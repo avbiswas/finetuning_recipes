@@ -18,7 +18,7 @@ except ModuleNotFoundError:
 DATASET = "data/paper_instructions_300K-v2"
 batch_size = 4
 data_size = 20
-temperature = 0.5
+EVAL_TEMPERATURE = 0.2
 
 # Pre-compile regex for post-processing
 def post_process(response):
@@ -68,6 +68,7 @@ def run_inference(
     dataloader,
     max_new_tokens=200,
     output_path=None,
+    temperature=EVAL_TEMPERATURE,
 ):
     print("Starting inference...")
     total_scores = {}

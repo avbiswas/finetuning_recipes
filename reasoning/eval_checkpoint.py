@@ -4,20 +4,10 @@ import json
 import math
 from pathlib import Path
 
-from reasoning.evaluate_base import (
-    DOOM_LOOP_PENALTY,
-    OUTPUT_FORMAT_MATCH_REWARD,
-    OUTPUT_FORMAT_MISMATCH_REWARD,
-    SEED,
-    _extract_think_content,
-    _has_doom_loop,
-    _has_expected_format,
-    _is_valid_json,
-    _word_count,
-    format_row,
-    score_rollouts,
-    summarize,
-)
+try:
+    from reasoning.env import SEED, format_row, score_rollouts, summarize
+except ModuleNotFoundError:
+    from env import SEED, format_row, score_rollouts, summarize
 
 
 def parse_args():
