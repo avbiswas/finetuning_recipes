@@ -65,11 +65,11 @@ def collect_rollouts(
 
     # Merge the LoRA adapter into the base weights for the decode loop so each
     # of the (hundreds of) generation steps runs at plain-base speed instead of
-    # recomputing base + A@B every layer. Unmerge afterwards so training still
-    # sees the adapter as separate, gradient-bearing parameters.
+    # recomputing base + A@B every layer. Unmerge afterwards so training (and the
+    # old_log_probs forward below) sees the adapter as separate parameters.
     generation_model.merge_adapter()
     try:
-        gen_out = generate_responses(
+        full_responses = generate_responses(
             generation_model,
             inputs,
             max_new_tokens=max_new_tokens,
@@ -78,32 +78,27 @@ def collect_rollouts(
             top_p=top_p,
             temperature=temperature,
             do_sample=True,
-            return_logits=True,
         )
     finally:
         generation_model.unmerge_adapter()
 
-    full_responses = gen_out.sequences
     responses = full_responses[:, input_size:]
-
-    # old_log_probs come straight from the generation logits (verified to match a
-    # forward pass at response positions to ~1e-5), so we skip a second full
-    # forward over the whole batch. Aligned to the [B, seq-1] log-prob layout
-    # (index j predicts token j+1); prompt-region entries stay 0 but are zeroed
-    # by response_masks downstream anyway.
-    gen_logits = torch.stack(gen_out.logits, dim=1)
-    gen_log_probs = (
-        torch.log_softmax(gen_logits, dim=-1)
-        .gather(-1, responses.unsqueeze(-1))
-        .squeeze(-1)
+    attention_masks = torch.cat(
+        [
+            torch.repeat_interleave(batch["attention_mask"], n_rollouts, dim=0),
+            (responses != tokenizer.pad_token_id).to(torch.int64),
+        ],
+        dim=1,
     )
-    old_log_probs = torch.zeros(
-        full_responses.shape[0],
-        full_responses.shape[1] - 1,
-        dtype=gen_log_probs.dtype,
-        device=gen_log_probs.device,
+    # old_log_probs via a forward over the (unmerged, live-adapter) policy — the
+    # SAME code path and weights as the training forward, so the importance ratio
+    # is exactly 1.0 at step 0. (Deriving these from generation logits instead
+    # diverges ~15% per token in bf16 because merged-gen != unmerged-forward.)
+    old_log_probs, _ = calculate_log_probs(
+        generation_model,
+        full_responses,
+        attention_masks,
     )
-    old_log_probs[:, input_size - 1 :] = gen_log_probs
 
     completion_texts = tokenizer.batch_decode(responses, skip_special_tokens=True)
     token_counts = (

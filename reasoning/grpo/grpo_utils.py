@@ -11,11 +11,7 @@ def generate_responses(
     top_p=0.95,
     temperature=0.5,
     do_sample=True,
-    return_logits=False,
 ):
-    # return_logits=True yields a GenerateDecoderOnlyOutput with .sequences and
-    # per-step .logits, so callers can derive old_log_probs without a second
-    # forward pass. Default returns just the sequence tensor (eval path).
     generated_response = llm.generate(
         **inputs,
         max_new_tokens=max_new_tokens,
@@ -25,8 +21,6 @@ def generate_responses(
         temperature=temperature,
         eos_token_id=eos_token_id,
         pad_token_id=eos_token_id,
-        return_dict_in_generate=return_logits,
-        output_logits=return_logits,
     )
     return generated_response
 
