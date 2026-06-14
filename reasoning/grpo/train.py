@@ -367,6 +367,10 @@ class GRPO:
                 n_rollouts=n_rollouts,
                 top_p=top_p,
                 temperature=temperature,
+                # Reuse the training batch size to chunk the old_log_probs forward:
+                # the training forward over this many sequences already fits (and is
+                # heavier), so the rollout forward over the same chunk is safe.
+                logprob_chunk_size=batch_size,
             )
 
         reward_batch = score_completions(

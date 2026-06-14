@@ -47,6 +47,28 @@ def calculate_log_probs(model, input_ids, attention_masks):
     return token_log_probs, full_log_probs
 
 
+def calculate_token_log_probs(model, input_ids, attention_masks, chunk_size):
+    """Per-token log-probs only, computed in batch-chunks to bound peak memory.
+
+    Equivalent to calculate_log_probs(...)[0], but never materializes the full
+    [B, T, vocab] log-softmax over the whole batch at once — that tensor is ~23GB
+    at rollout_batch_size*n_rollouts and OOMs. Chunking over the batch is exact
+    (each sequence's log-probs are independent given its own attention mask).
+    """
+    chunks = []
+    for start in range(0, input_ids.shape[0], max(chunk_size, 1)):
+        ids = input_ids[start : start + max(chunk_size, 1)]
+        mask = attention_masks[start : start + max(chunk_size, 1)]
+        logits = model(input_ids=ids, attention_mask=mask).logits
+        log_probs = torch.log_softmax(logits[:, :-1, :], dim=-1)
+        token_log_probs = torch.gather(
+            log_probs, dim=2, index=ids[:, 1:].unsqueeze(-1)
+        ).squeeze(-1)
+        chunks.append(token_log_probs)
+        del logits, log_probs
+    return torch.cat(chunks, dim=0)
+
+
 def collect_rollouts(
     generation_model,
     tokenizer,
@@ -55,6 +77,7 @@ def collect_rollouts(
     n_rollouts,
     top_p,
     temperature,
+    logprob_chunk_size,
 ):
     inputs = {
         "input_ids": batch["input_ids"],
@@ -94,10 +117,14 @@ def collect_rollouts(
     # SAME code path and weights as the training forward, so the importance ratio
     # is exactly 1.0 at step 0. (Deriving these from generation logits instead
     # diverges ~15% per token in bf16 because merged-gen != unmerged-forward.)
-    old_log_probs, _ = calculate_log_probs(
+    # Chunked over the batch: the full B*n_rollouts forward materializes a ~23GB
+    # log-softmax and OOMs; chunking bounds peak memory (exact, sequences are
+    # independent).
+    old_log_probs = calculate_token_log_probs(
         generation_model,
         full_responses,
         attention_masks,
+        chunk_size=logprob_chunk_size,
     )
 
     completion_texts = tokenizer.batch_decode(responses, skip_special_tokens=True)
