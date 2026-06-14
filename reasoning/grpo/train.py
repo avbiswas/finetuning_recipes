@@ -294,28 +294,6 @@ class GRPO:
             )
         )
 
-    def eval_stepwise(self, step):
-        """Lightweight eval for stepwise checkpoints — no model save."""
-        if not accelerator.is_main_process:
-            return
-        eval_path = logs_dir / f"eval_generations_step_{step}.json"
-        stats_df = run_inference(
-            accelerator.unwrap_model(llm),
-            tokenizer,
-            test_dataloader,
-            max_new_tokens=max_new_tokens,
-            output_path=eval_path,
-            temperature=eval_temperature,
-        )
-        step_score_mean = stats_df["total_reward"].mean()
-        step_score_std = stats_df["total_reward"].std()
-        pprint(
-            f"[bold cyan]Step {step} eval:[/bold cyan] "
-            f"[bold]{step_score_mean:.3f} +- {step_score_std:.3f}[/bold] "
-            f"(on {len(stats_df)} examples)"
-        )
-        return step_score_mean, step_score_std
-
     def train(self):
         optimizer.zero_grad()
         i = 0
@@ -343,7 +321,14 @@ class GRPO:
                     num_train_events += 1
                     self.buffer = []
 
-                    if accelerator.is_main_process:
+                    # Only run the (expensive) full eval + checkpoint logic every
+                    # Nth train event. num_train_events is incremented above, so
+                    # the first event (1) is skipped and eval fires at 8, 16, ...
+                    # (<=0 disables the throttle -> eval every event, as before).
+                    if accelerator.is_main_process and (
+                        eval_every_train_step <= 0
+                        or num_train_events % eval_every_train_step == 0
+                    ):
                         self.mean_inference_score, self.std_inference_score = inference(
                             num_train_events
                         )
@@ -440,10 +425,6 @@ class GRPO:
                             f"loss: {np.mean(self.losses):.3f}"
                         )
                         progress_bar.update(1)
-                    if eval_every_train_step > 0 and self.num_training % eval_every_train_step == 0:
-                        llm.eval()
-                        self.eval_stepwise(self.num_training)
-                        llm.train()
         if needs_training:
             optimizer.step()
             optimizer.zero_grad()

@@ -16,6 +16,7 @@ training:
   top_p: 0.95
   num_repeats: 1
   buffer_size: 2
+  eval_every_train_step: 1   # tiny run never reaches event 8; eval+save every event so the smoke exercises them
 
 data:
   dataset: "data/paper_instructions_300K-v2"

@@ -72,6 +72,13 @@ def run_inference(
 ):
     print("Starting inference...")
     total_scores = {}
+    # Merge the LoRA adapter for the eval decode loop (same ~1.6x speedup as
+    # rollouts). Safe here: eval only generates + scores — no log_probs or
+    # importance ratio — so the merged-vs-unmerged bf16 difference is irrelevant.
+    # Guarded for the standalone __main__ path that loads a plain (non-PEFT) model.
+    merged_for_eval = hasattr(llm, "merge_adapter")
+    if merged_for_eval:
+        llm.merge_adapter()
     for i, d in enumerate(tqdm(dataloader)):
 
         inputs = dict(
@@ -113,6 +120,8 @@ def run_inference(
         total_scores = append_scores(
             total_scores, stats
         )
+    if merged_for_eval:
+        llm.unmerge_adapter()
     stats_df = print_stats(total_scores, output_path=output_path)
     return stats_df
 
