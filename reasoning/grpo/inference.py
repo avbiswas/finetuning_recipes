@@ -11,9 +11,9 @@ import pandas as pd
 from pathlib import Path
 
 try:
-    from reasoning.env import score_completions
+    from reasoning.env import diagnose_completion, score_completions
 except ModuleNotFoundError:
-    from env import score_completions
+    from env import diagnose_completion, score_completions
 
 DATASET = "data/paper_instructions_300K-v2"
 batch_size = 4
@@ -51,6 +51,20 @@ def print_stats(scores_list, output_path=None):
     stats_cols = [col for col in df.columns if col not in ["question", "response", "answer"]]
     stats_df = df[stats_cols]
     pprint(stats_df.describe().round(2))
+    match_rates = {
+        name: float(df[name].mean())
+        for name in ("datatype_matches", "schema_matches")
+        if name in df
+    }
+    if match_rates:
+        pprint(
+            {
+                name.replace("matches", "match_rate"): f"{value:.1%}"
+                for name, value in match_rates.items()
+            },
+            title="Structural match rates",
+            is_json=True,
+        )
     return stats_df
 
 def append_scores(total_scores, scores_dict):
@@ -103,10 +117,15 @@ def run_inference(
         model_num_tokens = (newly_generated_tokens != tokenizer.eos_token_id).to(torch.int32).sum(axis=-1).cpu().numpy()
         answers = [extract_answer_fast(o) for o in out]
         
+        references = [item["answer"] for item in d["item"]]
         reward_batch = score_completions(
             out,
-            [item["answer"] for item in d["item"]],
+            references,
         )
+        diagnostics = [
+            diagnose_completion(completion, reference)
+            for completion, reference in zip(out, references)
+        ]
         
         stats = {} 
         stats["question"] = [item["prompt"] for item in d["item"]]
@@ -116,6 +135,13 @@ def run_inference(
         stats["total_reward"] = reward_batch.total
         for k, v in reward_batch.components.items():
             stats[k] = v
+        for name in (
+            "datatype_matches",
+            "schema_matches",
+            "reference_datatype",
+            "response_datatype",
+        ):
+            stats[name] = [diagnostic[name] for diagnostic in diagnostics]
 
         total_scores = append_scores(
             total_scores, stats

@@ -259,11 +259,23 @@ class GRPO:
         std_reward = np.std(self.rewards)
 
         individual_rewards = {k: np.mean(v) for k, v in self.individual_rewards.items()}
+        match_rates = {
+            "datatype_match_rate": float(
+                np.mean(np.array(self.individual_rewards["output_datatype_reward"]) > 0)
+            ),
+            "schema_match_rate": float(
+                np.mean(np.array(self.individual_rewards["output_schema_reward"]) > 0)
+            ),
+        }
         rewards_breakdown_str = "\n".join(
             [
                 f"[blue]{k}: [/blue] [bold]{v:.3f}[/bold]"
                 for k, v in individual_rewards.items()
             ]
+        )
+        match_rates_str = "\n".join(
+            f"[blue]{name}: [/blue] [bold]{value:.1%}[/bold]"
+            for name, value in match_rates.items()
         )
         pprint(
             f"""
@@ -272,6 +284,7 @@ class GRPO:
 [blue]loss:[/blue]: [bold]{mean_loss:.3f}[/bold]
 [blue]reward:[/blue]: [bold]{mean_reward:.3f} +- {std_reward:.3f}[/bold]
 {rewards_breakdown_str}
+{match_rates_str}
 [green]inference scores:[/green]: [bold]{self.mean_inference_score:.3f} +- {self.std_inference_score:.3f}[/bold]
 """,
             title="",
@@ -288,6 +301,7 @@ class GRPO:
                     name: summarize_values(values)
                     for name, values in self.individual_rewards.items()
                 },
+                **match_rates,
                 **{
                     f"{name}_mean": value
                     for name, value in individual_rewards.items()
