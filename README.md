@@ -1,6 +1,6 @@
 # Finetuning Recipes
 
-End-to-end post-training recipes for small language models — from continued pre-training to preference alignment. This is the [Neural Breakdown YouTube Model Training course]([https://www.youtube.com/playlist?list=PLHl0PLdiWkLg]).
+End-to-end post-training recipes for small language models — from continued pre-training to preference alignment. This is the [Neural Breakdown YouTube Model Training course](https://www.youtube.com/playlist?list=PLHl0PLdiWkLg).
 
 ## What This Covers
 
