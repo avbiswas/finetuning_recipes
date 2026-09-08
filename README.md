@@ -1,6 +1,6 @@
 # Finetuning Recipes
 
-End-to-end post-training recipes for small language models — from continued pre-training to preference alignment. Part of the [Neural Breakdown YouTube course](https://www.youtube.com/@avb_fj).
+End-to-end post-training recipes for small language models — from continued pre-training to preference alignment. This is the [Neural Breakdown YouTube Model Training course]([https://www.youtube.com/playlist?list=PLHl0PLdiWkLg]).
 
 ## What This Covers
 
@@ -10,6 +10,7 @@ End-to-end post-training recipes for small language models — from continued pr
 | **SFT** (Supervised Fine-Tuning) | Instruction-tune the CPT model on instruction data |
 | **DPO** (Direct Preference Optimization) | Align the SFT model using pairwise human/AI preferences |
 | **RL** (Reinforcement learning) | Training Reward models and using them to train neural models |
+
 
 ## Related Repos
 
