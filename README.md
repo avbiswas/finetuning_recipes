@@ -9,9 +9,7 @@ End-to-end post-training recipes for small language models — from continued pr
 | **CPT** (Continued Pre-Training) | Further pre-train a base model on domain-specific tasks |
 | **SFT** (Supervised Fine-Tuning) | Instruction-tune the CPT model on instruction data |
 | **DPO** (Direct Preference Optimization) | Align the SFT model using pairwise human/AI preferences |
-| **RLVR** | Coming next — reinforcement learning with verifiable rewards |
-
-Videos for [CPT](https://youtu.be/B8Ur62D3J3U) and [SFT](https://youtu.be/gvZIUEL6Ruc?si=da47dP3Fad-ggAhH) are already on the channel. DPO and RLVR videos are in the works.
+| **RL** (Reinforcement learning) | Training Reward models and using them to train neural models |
 
 ## Related Repos
 
